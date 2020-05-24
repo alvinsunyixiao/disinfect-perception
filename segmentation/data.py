@@ -43,8 +43,8 @@ class COCODataset(Dataset):
 
     DEFAULT_PARAMS=o(
         version=2017,
-        data_dir='/dataset/coco-2017',
-        annotation_dir='/dataset/coco-2017/annotations',
+        data_dir='/data/coco2017',
+        annotation_dir='/data/coco2017/annotations',
         min_area=200,
         crop_params=MultiRandomAffineCrop.DEFAULT_PARAMS,
         classes=set([

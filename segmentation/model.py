@@ -5,6 +5,8 @@ from torch import nn
 from torchvision.models import resnet
 from torchvision.models.utils import load_state_dict_from_url
 
+from utils.params import ParamDict as o
+
 class ImageNormalize(nn.Module):
 
     def __init__(self, mean, std):
@@ -139,17 +141,17 @@ class SegHead(nn.Module):
         x = self.output_sigmoid(x)
         return x
 
-class FPNResNetx(nn.Module):
+class FPNx(nn.Module):
 
-    def __init__(self, resnet, fp_channels, num_classes,
+    def __init__(self, backbone, fp_channels, num_classes,
                  backbone_channels, pretrianed_backbone=True):
-        super(FPNResNetx, self).__init__()
-        self.resnet = resnet(pretrained=pretrianed_backbone)
+        super(FPNx, self).__init__()
+        self.backbone = backbone(pretrained=pretrianed_backbone)
         self.fpn = FeaturePyramid(backbone_channels, fp_channels)
         self.seghead = SegHead(fp_channels, 1, num_classes)
 
     def forward(self, x):
-        backbone_layers = self.resnet(x)
+        backbone_layers = self.backbone(x)
         feature_layers = self.fpn(*backbone_layers)
         output = []
         for fmap in feature_layers:
@@ -157,14 +159,21 @@ class FPNResNetx(nn.Module):
 
         return output
 
-class FPNResNet18(FPNResNetx):
+class FPNResNet18(FPNx):
 
-    def __init__(self, fp_channels, num_classes, pretrianed_backbone=True):
+    DEFAULT_PARAMS=o(
+        fp_channels=256,
+        num_classes=21,
+        pretrianed_backbone=True,
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS):
+        self.p = params
         super(FPNResNet18, self).__init__(
-            resnet=ResNet18,
-            fp_channels=fp_channels,
-            num_classes=num_classes,
+            backbone=ResNet18,
+            fp_channels=self.p.fp_channels,
+            num_classes=self.p.num_classes,
             backbone_channels=(512, 256, 128, 64),
-            pretrianed_backbone=pretrianed_backbone,
+            pretrianed_backbone=self.p.pretrianed_backbone,
         )
 

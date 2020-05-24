@@ -51,8 +51,8 @@ class RandomAffineCrop(AffineCrop):
         # maximum absolute rotation in [deg]
         max_abs_rotation=30,
         # zoom scale, the bigger the number, the more zoomed in
-        min_log_scale=math.log(0.5),
-        max_log_scale=math.log(2.5),
+        min_log_scale=math.log(.8),
+        max_log_scale=math.log(3.),
         # aspect ratio defined as scale_y / scale_x
         min_log_aspect_ratio=math.log(3/4),
         max_log_aspect_ratio=math.log(4/3),

@@ -3,13 +3,22 @@ import torch.nn.functional as F
 
 from torch import nn
 
+from utils.params import ParamDict as o
+
 class FocalLoss(nn.Module):
 
-    def __init__(self, alpha=.25, gamma=2, eps=1e-6): # default paper settings
+    DEFAULT_PARAMS=o(
+        alpha=.25,
+        gamma=2,
+        eps=1e-6,
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS): # default paper settings
         super(FocalLoss, self).__init__()
-        self.alpha = nn.Parameter(torch.tensor(alpha), requires_grad=False)
-        self.gamma = nn.Parameter(torch.tensor(gamma), requires_grad=False)
-        self.eps = nn.Parameter(torch.tensor(eps), requires_grad=False)
+        self.p = params
+        self.alpha = nn.Parameter(torch.tensor(self.p.alpha), requires_grad=False)
+        self.gamma = nn.Parameter(torch.tensor(self.p.gamma), requires_grad=False)
+        self.eps = nn.Parameter(torch.tensor(self.p.eps), requires_grad=False)
 
     def forward(self, output, target, inv_mask):
         # make sure output and targets are of same size
