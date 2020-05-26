@@ -118,7 +118,7 @@ if __name__ == '__main__':
                 loss = fl(output[-1], seg_mask_bnhw, loss_mask_b1hw)
                 running_loss += loss.item()
         val_loss = running_loss / len(coco_val)
-        val_writer.add_scalar('val_loss', val_loss, (epoch+1) * len(coco_train))
+        val_writer.add_scalar('loss', val_loss, (epoch+1) * len(coco_train))
         print_info('Validation Loss: %.4f' % val_loss)
         # update learning rate
         lr_schedule.step()
