@@ -19,7 +19,7 @@ def lr_schedule(epoch):
         return 1e-2
 
 trainer=o(
-    lr_init=1e-1,
+    lr_init=1e-2,
     lr_momentum=0.9,
     lr_schedule=lr_schedule,
     weight_decay=1e-4,
