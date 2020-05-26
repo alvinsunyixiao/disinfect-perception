@@ -51,8 +51,8 @@ class RandomAffineCrop(AffineCrop):
         # maximum absolute rotation in [deg]
         max_abs_rotation=30,
         # zoom scale, the bigger the number, the more zoomed in
-        min_log_scale=math.log(.8),
-        max_log_scale=math.log(3.),
+        min_log_scale=math.log(.2),
+        max_log_scale=math.log(1.),
         # aspect ratio defined as scale_y / scale_x
         min_log_aspect_ratio=math.log(3/4),
         max_log_aspect_ratio=math.log(4/3),
@@ -127,3 +127,18 @@ class MultiRandomAffineCrop(RandomAffineCrop):
                 self.p.output_hw[::-1], Image.AFFINE, affine_coeffs, resample=self.p.interp)
         return output_dict
 
+class MultiCenterAffineCrop(MultiRandomAffineCrop):
+
+    DEFAULT_PARAMS=MultiRandomAffineCrop.DEFAULT_PARAMS
+
+    def __init__(self, params=DEFAULT_PARAMS):
+        super(MultiCenterAffineCrop, self).__init__(params)
+
+    def get_random_affine_crop(self, input_hw):
+        center_y = input_hw[0] / 2
+        center_x = input_hw[1] / 2
+        rotation = 0
+        scale_y = self.p.output_hw[0] / input_hw[0]
+        scale_x = self.p.output_hw[1] / input_hw[1]
+        max_scale = max(scale_y, scale_x)
+        return (center_y, center_x), rotation, (max_scale, max_scale)

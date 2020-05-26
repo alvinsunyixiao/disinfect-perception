@@ -7,7 +7,7 @@ from utils.params import ParamDict as o
 
 data = COCODataset.DEFAULT_PARAMS(
     batch_size=32,
-    num_workers=10,
+    num_workers=12,
 )
 
 def lr_schedule(epoch):
@@ -19,10 +19,11 @@ def lr_schedule(epoch):
         return 1e-2
 
 trainer=o(
-    lr_init=1e-2,
+    lr_init=1e-1,
     lr_momentum=0.9,
     lr_schedule=lr_schedule,
     weight_decay=1e-4,
+    mixed_precision=True,
 )
 
 PARAMS=o(

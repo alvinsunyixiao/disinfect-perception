@@ -8,7 +8,7 @@ from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
 from utils.params import ParamDict as o
-from segmentation.augment import MultiRandomAffineCrop
+from segmentation.augment import MultiRandomAffineCrop, MultiCenterAffineCrop
 
 class SegEncoder:
 
@@ -81,7 +81,10 @@ class COCODataset(Dataset):
             '{}{}'.format(self.mode, self.p.version))
         self.coco = COCO(self.annotation_path)
         self.img_ids = list(self.coco.imgs.keys())
-        self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
+        if train:
+            self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
+        else:
+            self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
         self.encoder = SegEncoder(len(self.p.classes))
         self.class_map = self._generate_class_map()
 

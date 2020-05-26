@@ -36,7 +36,7 @@ class SameConvBNReLU(nn.ModuleDict):
         nn.init.kaiming_normal_(self.conv.weight, mode='fan_out')
         if self.conv.bias is not None:
             nn.init.zeros_(self.conv.bias)
-        self.bn = nn.BatchNorm2d(in_channel) if has_bn else nn.Identity()
+        self.bn = nn.BatchNorm2d(out_channel) if has_bn else nn.Identity()
         self.relu = nn.ReLU() if has_relu else nn.Identity()
 
     def forward(self, x):
@@ -71,7 +71,7 @@ class ResNet(resnet.ResNet):
         x3 = self.layer3(x2)
         x4 = self.layer4(x3)
 
-        return [x4, x3, x2, x1]
+        return (x4, x3, x2, x1)
 
 class ResNet50(ResNet):
 
@@ -120,35 +120,39 @@ class FeaturePyramid(nn.Module):
             fmaps.append(merged_fmap)
             prev_fmap = merged_fmap
 
-        return fmaps
+        return tuple(fmaps)
 
 class SegHead(nn.Module):
 
-    def __init__(self, in_channel, num_layers, num_classes, forground=0.01):
+    def __init__(self, in_channel, mid_channel, num_layers, num_classes, forground=0.01):
         super(SegHead, self).__init__()
-        layers = [SameConvBNReLU(in_channel, in_channel, 3, 1) for _ in range(num_layers)]
-        self.head = nn.Sequential(*layers)
-        self.upsample = nn.ConvTranspose2d(in_channel, num_classes, 2, 2)
-        nn.init.normal_(self.upsample.weight, std=1e-2)
-        # see focal loss for this initialization
-        nn.init.constant_(self.upsample.bias,
+        layers = []
+        for i in range(num_layers):
+            in_ch = in_channel if i == 0 else mid_channel
+            layers.append(SameConvBNReLU(in_ch, mid_channel, 3, 1))
+        self.convs = nn.Sequential(*layers)
+        self.reduce = nn.Conv2d(mid_channel, num_classes, 1, 1)
+        nn.init.normal_(self.reduce.weight, std=1e-2)
+        nn.init.constant_(self.reduce.bias,
                           -math.log((1-forground) / forground))
+        self.upsample = nn.Upsample(scale_factor=4, mode='bilinear')
         self.output_sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        x = self.head(x)
+        x = self.convs(x)
+        x = self.reduce(x)
         x = self.upsample(x)
         x = self.output_sigmoid(x)
         return x
 
 class FPNx(nn.Module):
 
-    def __init__(self, backbone, fp_channels, num_classes,
-                 backbone_channels, pretrianed_backbone=True):
+    def __init__(self, backbone, fp_channels, seg_channels, seg_layers,
+                 num_classes, backbone_channels, pretrianed_backbone=True):
         super(FPNx, self).__init__()
         self.backbone = backbone(pretrained=pretrianed_backbone)
         self.fpn = FeaturePyramid(backbone_channels, fp_channels)
-        self.seghead = SegHead(fp_channels, 1, num_classes)
+        self.seghead = SegHead(fp_channels, seg_channels, seg_layers, num_classes)
 
     def forward(self, x):
         backbone_layers = self.backbone(x)
@@ -157,12 +161,14 @@ class FPNx(nn.Module):
         for fmap in feature_layers:
             output.append(self.seghead(fmap))
 
-        return output
+        return tuple(output)
 
 class FPNResNet18(FPNx):
 
     DEFAULT_PARAMS=o(
         fp_channels=256,
+        seg_channels=64,
+        seg_layers=1,
         num_classes=21,
         pretrianed_backbone=True,
     )
@@ -172,6 +178,8 @@ class FPNResNet18(FPNx):
         super(FPNResNet18, self).__init__(
             backbone=ResNet18,
             fp_channels=self.p.fp_channels,
+            seg_channels=self.p.seg_channels,
+            seg_layers=self.p.seg_layers,
             num_classes=self.p.num_classes,
             backbone_channels=(512, 256, 128, 64),
             pretrianed_backbone=self.p.pretrianed_backbone,
