@@ -91,7 +91,9 @@ if __name__ == '__main__':
                 # forward inference
                 with autocast(p.trainer.mixed_precision):
                     output = model(image_b3hw)
-                    loss = fl(output[-1], seg_mask_bnhw, loss_mask_b1hw)
+                    loss = 0
+                    for o in output:
+                        loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
                 # backward optimize
                 if p.trainer.mixed_precision:
                     scaler.scale(loss).backward()
@@ -115,7 +117,9 @@ if __name__ == '__main__':
             loss_mask_b1hw = sample['loss_mask_b1hw'].to(device)
             with torch.no_grad():
                 output = model(image_b3hw)
-                loss = fl(output[-1], seg_mask_bnhw, loss_mask_b1hw)
+                loss = 0
+                for o in output:
+                    loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
                 running_loss += loss.item()
         val_loss = running_loss / len(coco_val)
         val_writer.add_scalar('loss', val_loss, (epoch+1) * len(coco_train))

@@ -167,7 +167,7 @@ class FPNResNet18(FPNx):
 
     DEFAULT_PARAMS=o(
         fp_channels=256,
-        seg_channels=64,
+        seg_channels=256,
         seg_layers=1,
         num_classes=21,
         pretrianed_backbone=True,

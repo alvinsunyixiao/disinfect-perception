@@ -70,6 +70,12 @@ class COCODataset(Dataset):
             'sink',
             'refrigerator',
         ]),
+        color_jitter=o(
+            brightness=0.3,
+            contrast=0.3,
+            saturation=0.3,
+            hue=0.1,
+        )
     )
 
     def __init__(self, params=DEFAULT_PARAMS, train=True):
@@ -87,6 +93,12 @@ class COCODataset(Dataset):
             self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
         self.encoder = SegEncoder(len(self.p.classes))
         self.class_map = self._generate_class_map()
+        self.color_jitter = torchvision.transforms.ColorJitter(
+            brightness=self.p.color_jitter.brightness,
+            contrast=self.p.color_jitter.contrast,
+            saturation=self.p.color_jitter.saturation,
+            hue = self.p.color_jitter.hue
+        )
 
     def _generate_class_map(self):
         idx = 1
@@ -124,9 +136,15 @@ class COCODataset(Dataset):
             'loss_mask': loss_mask,
         }
 
+    def augment_image(self, img):
+        if self.mode == 'train':
+            img = self.color_jitter(img)
+        return img
+
     def __getitem__(self, key):
         raw_data = self.get_raw_data(key)
         crop_data = self.multi_crop(raw_data)
+        crop_data['image'] = self.augment_image(crop_data['image'])
         enc_data = self.encoder(crop_data)
         return enc_data
 

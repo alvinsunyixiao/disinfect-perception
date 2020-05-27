@@ -52,10 +52,13 @@ class RandomAffineCrop(AffineCrop):
         max_abs_rotation=30,
         # zoom scale, the bigger the number, the more zoomed in
         min_log_scale=math.log(.2),
-        max_log_scale=math.log(1.),
+        max_log_scale=math.log(1.5),
         # aspect ratio defined as scale_y / scale_x
         min_log_aspect_ratio=math.log(3/4),
         max_log_aspect_ratio=math.log(4/3),
+        # random flip
+        flip_lr=True, # left / right
+        flip_ud=False, # up / down
         # interpolation used for transformation
         interp=Image.NEAREST,
     )
@@ -84,6 +87,11 @@ class RandomAffineCrop(AffineCrop):
         # generate crop center that ensures the crop lies within the input image
         center_y = random.uniform(crop_h / 2, input_hw[0] - crop_h / 2)
         center_x = random.uniform(crop_w / 2, input_hw[1] - crop_w / 2)
+        # random flips
+        if self.p.flip_lr:
+            scale_x *= random.choice([-1, 1])
+        if self.p.flip_ud:
+            scale_y *= random.choice([-1, 1])
         # generate random rotations
         rotation = random.uniform(-self.p.max_abs_rotation, self.p.max_abs_rotation)
         return (center_y, center_x), rotation, (scale_y, scale_x)

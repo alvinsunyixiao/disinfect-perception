@@ -21,12 +21,10 @@ class FocalLoss(nn.Module):
         self.eps = nn.Parameter(torch.tensor(self.p.eps), requires_grad=False)
 
     def forward(self, output, target, inv_mask):
-        '''
         # make sure output and targets are of same size
         if output.shape != target.shape:
             target = F.interpolate(target, (output.shape[2], output.shape[3]))
             inv_mask = F.interpolate(inv_mask, (output.shape[2], output.shape[3]))
-        '''
         pt = output * target + (1 - output) * (1 - target)
         pt = torch.clamp(pt, self.eps, 1-self.eps)
         at = self.alpha * target + (1 - self.alpha) * (1 - target)
