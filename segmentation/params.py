@@ -24,6 +24,7 @@ trainer=o(
     lr_schedule=lr_schedule,
     weight_decay=1e-4,
     mixed_precision=True,
+    num_epochs=100,
 )
 
 PARAMS=o(

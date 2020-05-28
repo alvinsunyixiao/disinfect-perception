@@ -23,6 +23,8 @@ def parse_arguments():
                         help='directories to store logging and checkpoints output')
     parser.add_argument('--tag', type=str, default=None,
                         help='optional tag name appended to the session name')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='path to the checkpoint to resume from')
     return parser.parse_args()
 
 def get_session_dir(logdir, tag):
@@ -74,8 +76,16 @@ if __name__ == '__main__':
     fl.to(device)
     # mixed precision preparation
     scaler = GradScaler()
+    # resume if applicable
+    epoch_start = 0
+    if args.resume is not None:
+        state_dict = torch.load(args.resume)
+        epoch_start = state_dict['epoch'] + 1
+        model.load_state_dict(state_dict['model'])
+        optimizer.load_state_dict(state_dict['optimizer'])
+        lr_schedule.load_state_dict(state_dict['lr_schedule'])
     # training loop
-    for epoch in range(100):
+    for epoch in range(epoch_start, p.trainer.num_epochs):
         # log learning rate
         train_writer.add_scalar('lr', lr_schedule.get_last_lr()[0], epoch * len(coco_train))
         # TRAIN
@@ -130,7 +140,7 @@ if __name__ == '__main__':
         torch.save({
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'lr_shedule': lr_schedule.state_dict(),
+            'lr_schedule': lr_schedule.state_dict(),
             'epoch': epoch,
         }, os.path.join(sess_dir, 'epoch-{}-{:.4f}.pth'.format(epoch, val_loss)))
 
