@@ -1,10 +1,10 @@
-import argparse
+import sys
 import os
+import argparse
 import pathlib
 import time
 import torch
 
-from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -75,7 +75,9 @@ if __name__ == '__main__':
     model.to(device)
     fl.to(device)
     # mixed precision preparation
-    scaler = GradScaler()
+    if p.trainer.mixed_precision:
+        from torch.cuda.amp import autocast, GradScaler
+        scaler = GradScaler()
     # resume if applicable
     epoch_start = 0
     if args.resume is not None:
@@ -99,7 +101,13 @@ if __name__ == '__main__':
                 # prevent accumulation
                 optimizer.zero_grad()
                 # forward inference
-                with autocast(p.trainer.mixed_precision):
+                if p.trainer.mixed_precision:
+                    with autocast(True):
+                        output = model(image_b3hw)
+                        loss = 0
+                        for o in output:
+                            loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
+                else:
                     output = model(image_b3hw)
                     loss = 0
                     for o in output:
