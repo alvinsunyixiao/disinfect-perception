@@ -39,14 +39,68 @@ class SegEncoder:
             'loss_mask_b1hw': tmp_dict['loss_mask'].float(),
         }
 
-class COCODataset(Dataset):
+class BaseSet(Dataset):
+    '''
+    Abstract base set
 
-    DEFAULT_PARAMS=o(
-        version=2017,
-        data_dir='/data/coco2017',
-        annotation_dir='/data/coco2017/annotations',
-        min_area=200,
+    To use this dataset implementation, simply inherent this class and
+    implement the following methods:
+        - __init__: overwrite init to implement necessary initialization.
+            But don't forget to invoke parent constructor as well!
+        - get_raw_data(self, ind): return a dictionary comprising of data
+            at dataset[ind].
+        - __len__: return the size of the underlying dataset.
+    '''
+    DEFAULT_PARAMS = o(
         crop_params=MultiRandomAffineCrop.DEFAULT_PARAMS,
+        color_jitter=o(
+            brightness=0.3,
+            contrast=0.3,
+            saturation=0.3,
+            hue=0.1,
+        )
+    )
+
+    def __init__(self, params, train):
+        self.p = params
+        self.mode = 'train' if train else 'val'
+        self.annotation_path = "NA"
+        self.img_dir = "NA"
+        if train:
+            self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
+        else:
+            self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
+        self.encoder = SegEncoder(len(self.p.classes))
+        self.color_jitter = torchvision.transforms.ColorJitter(
+            brightness=self.p.color_jitter.brightness,
+            contrast=self.p.color_jitter.contrast,
+            saturation=self.p.color_jitter.saturation,
+            hue = self.p.color_jitter.hue
+        )
+    
+    def augment_image(self, img):
+        # TODO: add more augmentation
+        if self.mode == 'train':
+            img = self.color_jitter(img)
+        return img
+    
+    def get_raw_data(self, key):
+        raise NotImplementedError("Pure Virtual Method")
+
+    def __getitem__(self, key):
+        raw_data = self.get_raw_data(key)
+        crop_data = self.multi_crop(raw_data)
+        crop_data['image'] = self.augment_image(crop_data['image'])
+        enc_data = self.encoder(crop_data)
+        return enc_data
+
+class COCODataset(BaseSet):
+    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS
+    DEFAULT_PARAMS.update(
+        version=2017,
+        data_dir='/data/COCO2017',
+        annotation_dir='/data/COCO2017/annotations',
+        min_area=200,
         classes=set([
             'bottle',
             'wine glass',
@@ -69,36 +123,18 @@ class COCODataset(Dataset):
             'toaster',
             'sink',
             'refrigerator',
-        ]),
-        color_jitter=o(
-            brightness=0.3,
-            contrast=0.3,
-            saturation=0.3,
-            hue=0.1,
-        )
+        ])
     )
 
     def __init__(self, params=DEFAULT_PARAMS, train=True):
-        self.p = params
-        self.mode = 'train' if train else 'val'
+        super(COCODataset, self).__init__(params, train)
         self.annotation_path = os.path.join(self.p.annotation_dir,
             'instances_{}{}.json'.format(self.mode, self.p.version))
         self.img_dir = os.path.join(self.p.data_dir,
             '{}{}'.format(self.mode, self.p.version))
         self.coco = COCO(self.annotation_path)
         self.img_ids = list(self.coco.imgs.keys())
-        if train:
-            self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
-        else:
-            self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
-        self.encoder = SegEncoder(len(self.p.classes))
         self.class_map = self._generate_class_map()
-        self.color_jitter = torchvision.transforms.ColorJitter(
-            brightness=self.p.color_jitter.brightness,
-            contrast=self.p.color_jitter.contrast,
-            saturation=self.p.color_jitter.saturation,
-            hue = self.p.color_jitter.hue
-        )
 
     def _generate_class_map(self):
         idx = 1
@@ -115,9 +151,9 @@ class COCODataset(Dataset):
         img_fpath = os.path.join(self.img_dir, img_fname)
         return Image.open(img_fpath).convert('RGB')
 
-    def get_raw_data(self, key):
-        assert isinstance(key, int), "non integer key not supported!"
-        img_id = self.img_ids[key]
+    def get_raw_data(self, ind):
+        assert isinstance(ind, int), "non integer index not supported!"
+        img_id = self.img_ids[ind]
         annotations = self.coco.imgToAnns[img_id]
         img = self._get_img(img_id)
         seg_mask = torch.zeros((img.size[1], img.size[0]), dtype=torch.uint8)
@@ -135,18 +171,6 @@ class COCODataset(Dataset):
             'seg_mask': seg_mask,
             'loss_mask': loss_mask,
         }
-
-    def augment_image(self, img):
-        if self.mode == 'train':
-            img = self.color_jitter(img)
-        return img
-
-    def __getitem__(self, key):
-        raw_data = self.get_raw_data(key)
-        crop_data = self.multi_crop(raw_data)
-        crop_data['image'] = self.augment_image(crop_data['image'])
-        enc_data = self.encoder(crop_data)
-        return enc_data
 
     def __len__(self):
         return len(self.coco.imgs)
