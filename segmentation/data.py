@@ -3,12 +3,16 @@ import os
 import torch
 import torchvision
 
+from scipy.io import loadmat
 from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
 from utils.params import ParamDict as o
 from segmentation.augment import MultiRandomAffineCrop, MultiCenterAffineCrop
+
+def get_seg_filename(img_name):
+    return img_name[:-4] + "_seg.png"
 
 class SegEncoder:
 
@@ -96,7 +100,7 @@ class BaseSet(Dataset):
 
 class COCODataset(BaseSet):
     DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS
-    DEFAULT_PARAMS.update(
+    DEFAULT_PARAMS = DEFAULT_PARAMS(
         version=2017,
         data_dir='/data/COCO2017',
         annotation_dir='/data/COCO2017/annotations',
@@ -175,3 +179,137 @@ class COCODataset(BaseSet):
     def __len__(self):
         return len(self.coco.imgs)
 
+class ADE20KDataset(BaseSet):
+    '''
+    Fine-grained instance-level segmentation data from the 2016 ADE20K challenge.
+
+    Data can be grabbed from http://data.csail.mit.edu/places/ADEchallenge/ADEChallengeData2016.zip
+    '''
+    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
+        root_dir = "/data/ADEChallengeData2016/",
+        classes=set([
+            "wall",
+            "floor, flooring",
+            "ceiling",
+            "bed",
+            "cabinet",
+            "door, double door",
+            "table",
+            "curtain, drape, drapery, mantle, pall",
+            "chair",
+            "sofa, couch, lounge",
+            "shelf",
+            "armchair",
+            "seat",
+            "desk",
+            "lamp",
+            "chest of drawers, chest, bureau, dresser",
+            "pillow",
+            "screen door, screen",
+            "coffee table, cocktail table",
+            "toilet, can, commode, crapper, pot, potty, stool, throne",
+            "kitchen island",
+            "computer, computing machine, computing device, data processor, electronic computer, information processing system",
+            "swivel chair",
+            "pole",
+            "bannister, banister, balustrade, balusters, handrail",
+            "cradle",
+            "oven",
+            "screen, silver screen, projection screen",
+            "blanket, cover",
+            "tray",
+            "crt screen",
+            "plate",
+            "monitor, monitoring device"
+        ])
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS, train=True):
+        '''
+        Initialize and load the ADE20K annotation file into memory.
+
+        Args:
+            - root: path to the folder containing the ADE20K_2016_07_26 folder.
+                e.g. It should be /data if images are in /data/ADE20K_2016_07_26/images
+            - annFile: path to the serialized Matlab array file provided in the dataset.
+                e.g. /data/ADE20K_2016_07_26/index_ade20k.mat
+        '''
+        super(ADE20KDataset, self).__init__(params, train)
+        root_dir = self.p.root_dir
+        if train:
+            img_dir = os.path.join(root_dir, "images/training")
+            seg_anno_path = os.path.join(root_dir, "annotations/training")
+        else:
+            img_dir = os.path.join(root_dir, "images/validation")
+            seg_anno_path = os.path.join(root_dir, "annotations/validation")
+        anno_path = os.path.join(root_dir, "sceneCategories.txt")
+        class_desc_path = os.path.join(root_dir, "objectInfo150.txt")
+        # Load file paths and annotations
+        with open(anno_path) as f:
+            anno_content = f.readlines()
+
+        self.img_path_list = []
+        self.scenario_list = []
+        self.seg_path_list = []
+
+        for line in anno_content:
+            img_name, scene_name = line[:-1].split(' ') # remove eol
+            if train and "val" in img_name:
+                continue
+            if not train and "train" in img_name:
+                continue
+            img_path = os.path.join(img_dir, img_name + '.jpg')
+            seg_path = os.path.join(seg_anno_path, img_name + '.png')
+            self.img_path_list.append(img_path)
+            self.seg_path_list.append(seg_path)
+            self.scenario_list.append(scene_name)
+
+        assert len(self.img_path_list) == len(self.scenario_list) == len(self.seg_path_list)
+        self.dataset_size = len(self.img_path_list)
+        self.class_map = self._generate_class_map(class_desc_path)
+
+    def get_raw_data(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            ret_dict
+        """
+        img_path = self.img_path_list[index]
+        seg_path = self.seg_path_list[index]
+        img = Image.open(img_path).convert('RGB')
+        seg_mask = np.array(Image.open(seg_path), dtype = np.uint8)
+        seg_mask = self.class_map(seg_mask)
+        seg_mask = torch.tensor(seg_mask, dtype = torch.uint8)
+        loss_mask = torch.zeros_like(seg_mask)
+        return {'image': img, 'seg_mask': seg_mask, 'loss_mask': loss_mask}
+
+    def _generate_class_map(self, class_desc_path):
+        # Take subset of class
+        with open(class_desc_path) as f:
+            class_desc = f.readlines()
+
+        class_desc = class_desc[1:] # Remove header
+        class_desc = [line[:-1].split('\t') for line in class_desc] # remove eol
+        class_name_list = [line[-1].strip(' ') for line in class_desc]
+        
+        map_dict = {}
+        cur_idx = 1 # Background maps to 0
+        for i in range(len(class_name_list)):
+            n = class_name_list[i]
+            if n in self.p.classes:
+                # Original class id is i + 1.
+                map_dict[i + 1] = cur_idx
+                cur_idx += 1
+        # Factory map function
+        def map_func(elem):
+            if elem in map_dict:
+                return map_dict[elem]
+            else:
+                return 0 # Map everything else to zero
+        vectorized_map_func = np.vectorize(map_func)
+        return vectorized_map_func
+
+    def __len__(self):
+        return self.dataset_size
