@@ -25,6 +25,8 @@ def parse_arguments():
                         help='optional tag name appended to the session name')
     parser.add_argument('--resume', type=str, default=None,
                         help='path to the checkpoint to resume from')
+    parser.add_argument('--pretrained', type=str, default=None,
+                        help='path to a saved weight checkpoint to initialize backbone')
     return parser.parse_args()
 
 def get_session_dir(logdir, tag):
@@ -50,7 +52,7 @@ if __name__ == '__main__':
     val_set = DataLoader(val_set, batch_size=p.data.batch_size, shuffle=True,
                           pin_memory=True, num_workers=p.data.num_workers, drop_last=False)
     # model
-    model = FPNResNet18(p.model)
+    model = FPNResNet18(p.model, pretrained_backbone_path = args.pretrained)
     fl = FocalLoss(p.loss)
     # optimizer
     # exclude weight decay from batch norms
@@ -83,6 +85,7 @@ if __name__ == '__main__':
     # resume if applicable
     epoch_start = 0
     if args.resume is not None:
+        assert args.pretrained is None, "Trainer resuming and using pretrained are mutually exclusive!"
         state_dict = torch.load(args.resume)
         epoch_start = state_dict['epoch'] + 1
         model.load_state_dict(state_dict['model'])
