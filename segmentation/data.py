@@ -7,15 +7,17 @@ from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
+from segmentation.augment import \
+    MultiRandomAffineCrop, MultiCenterAffineCrop, ImageAugmentor
 from utils.params import ParamDict as o
-from segmentation.augment import MultiRandomAffineCrop, MultiCenterAffineCrop
 
 class SegEncoder:
 
     def __init__(self, num_classes):
         self.num_classes = num_classes
 
-    def catgory_to_onehot(self, cat_map_1hw):
+    def catgory_to_onehot(self, cat_map_pil):
+        cat_map_1hw = self.pil_to_tensor(cat_map_pil)
         cat_ids_n = torch.arange(1, self.num_classes+1, dtype=cat_map_1hw.dtype)
         cat_ids_n11 = cat_ids_n[:, None, None]
         return (cat_ids_n11 == cat_map_1hw).float()
@@ -28,15 +30,11 @@ class SegEncoder:
 
     def __call__(self, data_dict):
         tmp_dict = data_dict.copy()
-        # convert all PIL image to torch Tensors
-        for key in tmp_dict:
-            if isinstance(tmp_dict[key], Image.Image):
-                tmp_dict[key] = self.pil_to_tensor(tmp_dict[key])
 
         return {
-            'image_b3hw': tmp_dict['image'].float().div(255),
+            'image_b3hw': tmp_dict['image'],
             'seg_mask_bnhw': self.catgory_to_onehot(tmp_dict['seg_mask']),
-            'loss_mask_b1hw': tmp_dict['loss_mask'].float(),
+            'loss_mask_b1hw': self.pil_to_tensor(tmp_dict['loss_mask']).float(),
         }
 
 class COCODataset(Dataset):
@@ -47,6 +45,7 @@ class COCODataset(Dataset):
         annotation_dir='/data/coco2017/annotations',
         min_area=200,
         crop_params=MultiRandomAffineCrop.DEFAULT_PARAMS,
+        augment_params=ImageAugmentor.DEFAULT_PARAMS,
         classes=set([
             'bottle',
             'wine glass',
@@ -70,12 +69,6 @@ class COCODataset(Dataset):
             'sink',
             'refrigerator',
         ]),
-        color_jitter=o(
-            brightness=0.3,
-            contrast=0.3,
-            saturation=0.3,
-            hue=0.1,
-        )
     )
 
     def __init__(self, params=DEFAULT_PARAMS, train=True):
@@ -89,16 +82,11 @@ class COCODataset(Dataset):
         self.img_ids = list(self.coco.imgs.keys())
         if train:
             self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
+            self.img_augmentor = ImageAugmentor(self.p.augment_params)
         else:
             self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
         self.encoder = SegEncoder(len(self.p.classes))
         self.class_map = self._generate_class_map()
-        self.color_jitter = torchvision.transforms.ColorJitter(
-            brightness=self.p.color_jitter.brightness,
-            contrast=self.p.color_jitter.contrast,
-            saturation=self.p.color_jitter.saturation,
-            hue = self.p.color_jitter.hue
-        )
 
     def _generate_class_map(self):
         idx = 1
@@ -136,15 +124,11 @@ class COCODataset(Dataset):
             'loss_mask': loss_mask,
         }
 
-    def augment_image(self, img):
-        if self.mode == 'train':
-            img = self.color_jitter(img)
-        return img
-
     def __getitem__(self, key):
         raw_data = self.get_raw_data(key)
         crop_data = self.multi_crop(raw_data)
-        crop_data['image'] = self.augment_image(crop_data['image'])
+        if self.mode == 'train':
+            crop_data['image'] = self.img_augmentor(crop_data['image'])
         enc_data = self.encoder(crop_data)
         return enc_data
 

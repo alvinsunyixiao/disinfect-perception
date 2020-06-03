@@ -150,3 +150,78 @@ class MultiCenterAffineCrop(MultiRandomAffineCrop):
         scale_x = self.p.output_hw[1] / input_hw[1]
         max_scale = max(scale_y, scale_x)
         return (center_y, center_x), rotation, (max_scale, max_scale)
+
+class AdditiveGaussianNoise:
+
+    def __init__(self, std, prob=0.8, per_channel=0.5):
+        self.std = std
+        self.prob = prob
+        self.per_channel = per_channel
+
+    def __call__(self, img_3hw):
+        if random.random() < self.prob:
+            if random.random() < self.per_channel:
+                noise = torch.randn(img_3hw.shape) * self.std
+            else:
+                noise = torch.randn((1,) + img_3hw.shape[1:]) * self.std
+            return img_3hw + noise
+        else:
+            return img_3hw
+
+class RandomColorJitter:
+
+    def __init__(self, brightness, contrast, saturation, hue, prob=0.8):
+        self.prob = prob
+        self.color_jitter = torchvision.transforms.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+        )
+
+    def __call__(self, img_pil):
+        assert isinstance(img_pil, Image.Image), "input must be PIL image"
+        if random.random() < self.prob:
+            return self.color_jitter(img_pil)
+        else:
+            return img_pil
+
+class ImageAugmentor:
+
+    DEFAULT_PARAMS=o(
+        color_jitter=o(
+            brightness=0.3,
+            contrast=0.3,
+            saturation=0.3,
+            hue=0.1,
+            prob=0.8,
+        ),
+        gauss_noise=o(
+            std=0.05,
+            prob=0.8,
+            per_channel=0.5,
+        ),
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS):
+        self.p = params
+        self.pil_to_tensor = torchvision.transforms.ToTensor()
+        self.color_jitter = RandomColorJitter(
+            brightness=self.p.color_jitter.brightness,
+            contrast=self.p.color_jitter.contrast,
+            saturation=self.p.color_jitter.saturation,
+            hue=self.p.color_jitter.hue,
+            prob=self.p.color_jitter.prob,
+        )
+        self.gauss_noise = AdditiveGaussianNoise(
+            std=self.p.gauss_noise.std,
+            prob=self.p.gauss_noise.prob,
+            per_channel=self.p.gauss_noise.per_channel,
+        )
+
+    def __call__(self, img_pil):
+        img_pil = self.color_jitter(img_pil)
+        img = self.pil_to_tensor(img_pil)
+        img = self.gauss_noise(img)
+        img = torch.clamp(img, 0, 1)
+        return img
