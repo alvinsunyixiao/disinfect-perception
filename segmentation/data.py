@@ -85,6 +85,7 @@ class COCODataset(Dataset):
             self.img_augmentor = ImageAugmentor(self.p.augment_params)
         else:
             self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
+            self.img_augmentor = torchvision.transforms.ToTensor()
         self.encoder = SegEncoder(len(self.p.classes))
         self.class_map = self._generate_class_map()
 
@@ -127,8 +128,7 @@ class COCODataset(Dataset):
     def __getitem__(self, key):
         raw_data = self.get_raw_data(key)
         crop_data = self.multi_crop(raw_data)
-        if self.mode == 'train':
-            crop_data['image'] = self.img_augmentor(crop_data['image'])
+        crop_data['image'] = self.img_augmentor(crop_data['image'])
         enc_data = self.encoder(crop_data)
         return enc_data
 
