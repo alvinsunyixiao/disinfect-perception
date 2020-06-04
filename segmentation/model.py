@@ -63,22 +63,8 @@ class ResNet(resnet.ResNet):
     @see https://pytorch.org/docs/stable/_modules/torchvision/models/resnet.html
     """
 
-    def __init__(self, arch='resnet50', pretrained_backbone_path = None, **kwargs):
+    def __init__(self, arch='resnet50', **kwargs):
         super(ResNet, self).__init__(**kwargs)
-        if pretrained_backbone_path is not None:
-            print("Attempting to load backbone from {}".format(pretrained_backbone_path))
-            pretrained_cp = torch.load(pretrained_backbone_path)
-            try:
-                weight_states = pretrained_cp['model']
-                my_states = self.state_dict()
-                for name, param in weight_states.items():
-                    if name.startswith("backbone."):
-                        my_state_name = name[9:] # remove backbone.
-                        if my_state_name.startswith("normalize"):
-                            continue # don't load normalization constants
-                        my_states[name[9:]].copy_(param)
-            except KeyError:
-                self.load_state_dict(pretrained_cp)
         self.normalize = ImageNormalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
@@ -98,23 +84,21 @@ class ResNet(resnet.ResNet):
 
 class ResNet50(ResNet):
 
-    def __init__(self, pretrained_backbone_path, **kwargs):
+    def __init__(self, **kwargs):
         super(ResNet50, self).__init__(
             arch='resnet50',
             block=resnet.Bottleneck,
             layers=[3, 4, 6, 3],
-            pretrained_backbone_path = pretrained_backbone_path,
             **kwargs,
         )
 
 class ResNet18(ResNet):
 
-    def __init__(self, pretrained_backbone_path, **kwargs):
+    def __init__(self, **kwargs):
         super(ResNet18, self).__init__(
             arch='resnet18',
             block=resnet.BasicBlock,
             layers=[2, 2, 2, 2],
-            pretrained_backbone_path = pretrained_backbone_path,
             **kwargs,
         )
 
@@ -171,9 +155,9 @@ class SegHead(nn.Module):
 class FPNx(nn.Module):
 
     def __init__(self, backbone, fp_channels, seg_channels, seg_layers,
-                 num_classes, backbone_channels, pretrained_backbone_path):
+                 num_classes, backbone_channels):
         super(FPNx, self).__init__()
-        self.backbone = backbone(pretrained_backbone_path)
+        self.backbone = backbone()
         self.fpn = FeaturePyramid(backbone_channels, fp_channels)
         self.seghead = SegHead(fp_channels, seg_channels, seg_layers, num_classes)
 
@@ -195,7 +179,7 @@ class FPNResNet18(FPNx):
         num_classes=21
     )
 
-    def __init__(self, params=DEFAULT_PARAMS, pretrained_backbone_path = None):
+    def __init__(self, params=DEFAULT_PARAMS):
         self.p = params
         super(FPNResNet18, self).__init__(
             backbone=ResNet18,
@@ -203,7 +187,6 @@ class FPNResNet18(FPNx):
             seg_channels=self.p.seg_channels,
             seg_layers=self.p.seg_layers,
             num_classes=self.p.num_classes,
-            backbone_channels=(512, 256, 128, 64),
-            pretrained_backbone_path=pretrained_backbone_path,
+            backbone_channels=(512, 256, 128, 64)
         )
 

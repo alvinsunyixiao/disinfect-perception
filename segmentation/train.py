@@ -52,7 +52,7 @@ if __name__ == '__main__':
     val_set = DataLoader(val_set, batch_size=p.data.batch_size, shuffle=True,
                           pin_memory=True, num_workers=p.data.num_workers, drop_last=False)
     # model
-    model = FPNResNet18(p.model, pretrained_backbone_path = args.pretrained)
+    model = FPNResNet18(p.model)
     fl = FocalLoss(p.loss)
     # optimizer
     # exclude weight decay from batch norms
@@ -84,13 +84,35 @@ if __name__ == '__main__':
         scaler = GradScaler()
     # resume if applicable
     epoch_start = 0
-    if args.resume is not None:
-        assert args.pretrained is None, "Trainer resuming and using pretrained are mutually exclusive!"
-        state_dict = torch.load(args.resume)
-        epoch_start = state_dict['epoch'] + 1
-        model.load_state_dict(state_dict['model'])
-        optimizer.load_state_dict(state_dict['optimizer'])
-        lr_schedule.load_state_dict(state_dict['lr_schedule'])
+    if args.resume is not None or args.pretrained is not None:
+        assert (args.pretrained is None) ^ (args.resume is None),\
+            "Trainer resuming and using pretrained are mutually exclusive!"
+        weight_path = args.resume or args.pretrained
+        state_dict = torch.load(weight_path)
+        if args.pretrained is not None:
+            # Load pretrained weights
+            try:
+                pretrained_weight_dict = state_dict['model']
+            except KeyError:
+                # infer that the user is using pretrained weight from other places
+                pretrained_weight_dict = state_dict
+            backbone_states = model.backbone.state_dict()
+            for name, param in backbone_states.items():
+                if name.startswith("normalize"):
+                    continue # don't load normalization constants
+                if 'num_batches_tracked' in name:
+                    continue # Don't load batches tracked to reset BN
+                try:
+                    pretrained_param = pretrained_weight_dict[name]
+                except KeyError:
+                    pretrained_param = pretrained_weight_dict["backbone." + name]
+                param.copy_(pretrained_param)
+        else:
+            # Resume unfinished training
+            epoch_start = state_dict['epoch'] + 1
+            model.load_state_dict(state_dict['model'])
+            optimizer.load_state_dict(state_dict['optimizer'])
+            lr_schedule.load_state_dict(state_dict['lr_schedule'])
     # training loop
     for epoch in range(epoch_start, p.trainer.num_epochs):
         # log learning rate
