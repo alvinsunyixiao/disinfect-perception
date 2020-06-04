@@ -51,8 +51,8 @@ class BaseSet(Dataset):
     implement the following methods:
         - __init__: overwrite init to implement necessary initialization.
             But don't forget to invoke parent constructor as well!
-        - get_raw_data(self, ind): return a dictionary comprising of data
-            at dataset[ind].
+        - get_raw_data(self, key): return a dictionary comprising of data
+            at dataset[key].
         - __len__: return the size of the underlying dataset.
     '''
     DEFAULT_PARAMS = o(
@@ -68,8 +68,6 @@ class BaseSet(Dataset):
     def __init__(self, params, train):
         self.p = params
         self.mode = 'train' if train else 'val'
-        self.annotation_path = "NA"
-        self.img_dir = "NA"
         if train:
             self.multi_crop = MultiRandomAffineCrop(self.p.crop_params)
         else:
@@ -99,8 +97,7 @@ class BaseSet(Dataset):
         return enc_data
 
 class COCODataset(BaseSet):
-    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS
-    DEFAULT_PARAMS = DEFAULT_PARAMS(
+    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
         version=2017,
         data_dir='/data/COCO2017',
         annotation_dir='/data/COCO2017/annotations',
@@ -155,9 +152,9 @@ class COCODataset(BaseSet):
         img_fpath = os.path.join(self.img_dir, img_fname)
         return Image.open(img_fpath).convert('RGB')
 
-    def get_raw_data(self, ind):
-        assert isinstance(ind, int), "non integer index not supported!"
-        img_id = self.img_ids[ind]
+    def get_raw_data(self, key):
+        assert isinstance(key, int), "non integer key not supported!"
+        img_id = self.img_ids[key]
         annotations = self.coco.imgToAnns[img_id]
         img = self._get_img(img_id)
         seg_mask = torch.zeros((img.size[1], img.size[0]), dtype=torch.uint8)
@@ -264,20 +261,20 @@ class ADE20KDataset(BaseSet):
             self.seg_path_list.append(seg_path)
             self.scenario_list.append(scene_name)
 
-        assert len(self.img_path_list) == len(self.scenario_list) == len(self.seg_path_list)
         self.dataset_size = len(self.img_path_list)
         self.class_map = self._generate_class_map(class_desc_path)
 
-    def get_raw_data(self, index):
+    def get_raw_data(self, key):
         """
         Args:
-            index (int): Index
+            key (int): key
 
         Returns:
             ret_dict
         """
-        img_path = self.img_path_list[index]
-        seg_path = self.seg_path_list[index]
+        assert isinstance(key, int), "non integer key not supported!"
+        img_path = self.img_path_list[key]
+        seg_path = self.seg_path_list[key]
         img = Image.open(img_path).convert('RGB')
         seg_mask = np.array(Image.open(seg_path), dtype = np.uint8)
         seg_mask = self.class_map(seg_mask)

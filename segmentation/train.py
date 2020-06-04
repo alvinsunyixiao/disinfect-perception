@@ -1,7 +1,7 @@
-import sys
-import os
 import argparse
+import os
 import pathlib
+import sys
 import time
 import torch
 
@@ -43,8 +43,8 @@ if __name__ == '__main__':
     p = ParamDict.from_file(args.params)
     sess_dir = get_session_dir(args.logdir, args.tag)
     # data
-    train_set = ADE20KDataset(p.data, train=True)
-    val_set = ADE20KDataset(p.data, train=False)
+    train_set = ADE20KDataset(p.data, train=True) #COCODataset(p.data, train=True)
+    val_set = ADE20KDataset(p.data, train=False) #COCODataset(p.data, train=False)
     print("Training set has {} data points.".format(len(train_set)))
     print("Validation set has {} data points".format(len(val_set)))
     train_set = DataLoader(train_set, batch_size=p.data.batch_size, shuffle=True,
