@@ -13,14 +13,24 @@ from utils.params import ParamDict as o
 
 class SegEncoder:
 
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, class_labeled=None):
         self.num_classes = num_classes
+        if class_labeled is None:
+            class_labeled = np.ones(num_classes, dtype=np.uint8)
+        assert len(class_labeled) == num_classes, \
+                    "number of class != length class labeled indicator array"
+        self.class_labeled_n11 = torch.from_numpy(class_labeled)[:, None, None]
 
     def catgory_to_onehot(self, cat_map_pil):
         cat_map_1hw = self.pil_to_tensor(cat_map_pil)
         cat_ids_n = torch.arange(1, self.num_classes+1, dtype=cat_map_1hw.dtype)
         cat_ids_n11 = cat_ids_n[:, None, None]
         return (cat_ids_n11 == cat_map_1hw).float()
+
+    def tile_loss_mask(self, loss_mask_pil):
+        loss_mask_1hw = self.pil_to_tensor(loss_mask_pil)
+        loss_mask_nhw = loss_mask_1hw & self.class_labeled_n11
+        return loss_mask_nhw.float()
 
     def pil_to_tensor(self, pil_img):
         img = torch.ByteTensor(torch.ByteStorage.from_buffer(pil_img.tobytes()))
@@ -34,7 +44,7 @@ class SegEncoder:
         return {
             'image_b3hw': tmp_dict['image'],
             'seg_mask_bnhw': self.catgory_to_onehot(tmp_dict['seg_mask']),
-            'loss_mask_b1hw': self.pil_to_tensor(tmp_dict['loss_mask']).float(),
+            'loss_mask_bnhw': self.tile_loss_mask(tmp_dict['loss_mask']),
         }
 
 class COCODataset(Dataset):
@@ -110,12 +120,12 @@ class COCODataset(Dataset):
         annotations = self.coco.imgToAnns[img_id]
         img = self._get_img(img_id)
         seg_mask = torch.zeros((img.size[1], img.size[0]), dtype=torch.uint8)
-        loss_mask = torch.zeros_like(seg_mask)
+        loss_mask = torch.ones_like(seg_mask)
         for ann in annotations:
             ann_mask = torch.from_numpy(self.coco.annToMask(ann))
             # mask indicating invalid regions
             if ann['iscrowd'] or ann['area'] < self.p.min_area:
-                loss_mask = torch.bitwise_or(loss_mask, ann_mask)
+                loss_mask = torch.bitwise_and(loss_mask, torch.bitwise_not(ann_mask))
             elif ann['category_id'] in self.class_map:
                 class_id = self.class_map[ann['category_id']]
                 seg_mask = torch.max(seg_mask, ann_mask*class_id)
