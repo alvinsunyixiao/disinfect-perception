@@ -5,9 +5,11 @@ from segmentation.loss import FocalLoss
 from segmentation.model import FPNResNet18
 from utils.params import ParamDict as o
 
-data = COCODataset.DEFAULT_PARAMS(
+data = o(
     batch_size=32,
     num_workers=12,
+    dataset=COCODataset,
+    params=COCODataset.DEFAULT_PARAMS,
 )
 
 def lr_schedule(epoch):
@@ -35,7 +37,7 @@ PARAMS=o(
 )
 
 def resolve_dependancies(params):
-    params.model.update(num_classes=len(params.data.classes))
+    params.model.update(num_classes=len(params.data.params.classes))
 
 resolve_dependancies(PARAMS)
 

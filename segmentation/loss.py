@@ -29,5 +29,6 @@ class FocalLoss(nn.Module):
         pt = torch.clamp(pt, self.eps, 1-self.eps)
         at = self.alpha * target + (1 - self.alpha) * (1 - target)
         loss = -at * torch.pow(1-pt, self.gamma) * torch.log(pt)
+        # @see FCOS: nomalize loss wrt. number of positive (forground) pixels
         norm = (target * mask).sum().clamp_min(1)
         return (loss / norm).sum()
