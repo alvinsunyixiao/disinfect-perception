@@ -74,14 +74,6 @@ if __name__ == '__main__':
     val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
     image_b3hw = torch.zeros((1,3) + p.data.crop_params.output_hw)
     train_writer.add_graph(model, image_b3hw)
-    # transfer to GPU device
-    device = torch.device('cuda:0')
-    model.to(device)
-    fl.to(device)
-    # mixed precision preparation
-    if p.trainer.mixed_precision:
-        from torch.cuda.amp import autocast, GradScaler
-        scaler = GradScaler()
     # resume if applicable
     epoch_start = 0
     if args.resume is not None or args.pretrained is not None:
@@ -91,28 +83,24 @@ if __name__ == '__main__':
         state_dict = torch.load(weight_path)
         if args.pretrained is not None:
             # Load pretrained weights
-            try:
-                pretrained_weight_dict = state_dict['model']
-            except KeyError:
-                # infer that the user is using pretrained weight from other places
-                pretrained_weight_dict = state_dict
-            backbone_states = model.backbone.state_dict()
-            for name, param in backbone_states.items():
-                if name.startswith("normalize"):
-                    continue # don't load normalization constants
-                if 'num_batches_tracked' in name:
-                    continue # Don't load batches tracked to reset BN
-                try:
-                    pretrained_param = pretrained_weight_dict[name]
-                except KeyError:
-                    pretrained_param = pretrained_weight_dict["backbone." + name]
-                param.copy_(pretrained_param)
+            pretrained_weight_dict = state_dict
+            if 'model' in pretrained_weight_dict:
+                pretrained_weight_dict = pretrained_weight_dict['model']
+            model.backbone.load_state_dict(pretrained_weight_dict, strict = False)
         else:
             # Resume unfinished training
             epoch_start = state_dict['epoch'] + 1
             model.load_state_dict(state_dict['model'])
             optimizer.load_state_dict(state_dict['optimizer'])
             lr_schedule.load_state_dict(state_dict['lr_schedule'])
+    # transfer to GPU device
+    device = torch.device('cuda:0')
+    model.to(device)
+    fl.to(device)
+    # mixed precision preparation
+    if p.trainer.mixed_precision:
+        from torch.cuda.amp import autocast, GradScaler
+        scaler = GradScaler()
     # training loop
     for epoch in range(epoch_start, p.trainer.num_epochs):
         # log learning rate
