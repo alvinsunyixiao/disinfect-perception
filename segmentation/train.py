@@ -86,7 +86,7 @@ if __name__ == '__main__':
             pretrained_weight_dict = state_dict
             if 'model' in pretrained_weight_dict:
                 pretrained_weight_dict = pretrained_weight_dict['model']
-            model.backbone.load_state_dict(pretrained_weight_dict, strict = False)
+            model.backbone.load_state_dict(pretrained_weight_dict, strict=False)
         else:
             # Resume unfinished training
             epoch_start = state_dict['epoch'] + 1
