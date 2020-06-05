@@ -127,6 +127,8 @@ class MultiRandomAffineCrop(RandomAffineCrop):
         affine_coeffs = self.get_affine_coeffs(
             self.p.output_hw, center_yx, rotation, scale_yx)
         for key in keys:
+            if output_dict[key] is None:
+                continue
             if isinstance(output_dict[key], torch.Tensor):
                 output_dict[key] = self.tensor_to_pil(output_dict[key])
             assert output_dict[key].size[::-1] == input_hw, \

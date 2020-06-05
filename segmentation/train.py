@@ -1,15 +1,15 @@
 import argparse
 import os
 import pathlib
+import sys
 import time
 import torch
 
-from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from segmentation.data import COCODataset
+from segmentation.data import COCODataset, ADE20KDataset
 from segmentation.loss import FocalLoss
 from segmentation.model import FPNResNet18
 from utils.console import print_info
@@ -25,6 +25,8 @@ def parse_arguments():
                         help='optional tag name appended to the session name')
     parser.add_argument('--resume', type=str, default=None,
                         help='path to the checkpoint to resume from')
+    parser.add_argument('--pretrained', type=str, default=None,
+                        help='path to a saved weight checkpoint to initialize backbone')
     return parser.parse_args()
 
 def get_session_dir(logdir, tag):
@@ -41,11 +43,13 @@ if __name__ == '__main__':
     p = ParamDict.from_file(args.params)
     sess_dir = get_session_dir(args.logdir, args.tag)
     # data
-    coco_train = COCODataset(p.data, train=True)
-    coco_val = COCODataset(p.data, train=False)
-    coco_train = DataLoader(coco_train, batch_size=p.data.batch_size, shuffle=True,
+    train_set = ADE20KDataset(p.data, train=True) #COCODataset(p.data, train=True)
+    val_set = ADE20KDataset(p.data, train=False) #COCODataset(p.data, train=False)
+    print("Training set has {} data points.".format(len(train_set)))
+    print("Validation set has {} data points".format(len(val_set)))
+    train_set = DataLoader(train_set, batch_size=p.data.batch_size, shuffle=True,
                             pin_memory=True, num_workers=p.data.num_workers, drop_last=True)
-    coco_val = DataLoader(coco_val, batch_size=p.data.batch_size, shuffle=True,
+    val_set = DataLoader(val_set, batch_size=p.data.batch_size, shuffle=True,
                           pin_memory=True, num_workers=p.data.num_workers, drop_last=False)
     # model
     model = FPNResNet18(p.model)
@@ -70,28 +74,41 @@ if __name__ == '__main__':
     val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
     image_b3hw = torch.zeros((1,3) + p.data.crop_params.output_hw)
     train_writer.add_graph(model, image_b3hw)
+    # resume if applicable
+    epoch_start = 0
+    if args.resume is not None or args.pretrained is not None:
+        assert (args.pretrained is None) ^ (args.resume is None),\
+            "Trainer resuming and using pretrained are mutually exclusive!"
+        weight_path = args.resume or args.pretrained
+        state_dict = torch.load(weight_path)
+        if args.pretrained is not None:
+            # Load pretrained weights
+            pretrained_weight_dict = state_dict
+            if 'model' in pretrained_weight_dict:
+                pretrained_weight_dict = pretrained_weight_dict['model']
+            model.backbone.load_state_dict(pretrained_weight_dict, strict=False)
+        else:
+            # Resume unfinished training
+            epoch_start = state_dict['epoch'] + 1
+            model.load_state_dict(state_dict['model'])
+            optimizer.load_state_dict(state_dict['optimizer'])
+            lr_schedule.load_state_dict(state_dict['lr_schedule'])
     # transfer to GPU device
     device = torch.device('cuda:0')
     model.to(device)
     fl.to(device)
     # mixed precision preparation
-    scaler = GradScaler()
-    # resume if applicable
-    epoch_start = 0
-    if args.resume is not None:
-        state_dict = torch.load(args.resume)
-        epoch_start = state_dict['epoch'] + 1
-        model.load_state_dict(state_dict['model'])
-        optimizer.load_state_dict(state_dict['optimizer'])
-        lr_schedule.load_state_dict(state_dict['lr_schedule'])
+    if p.trainer.mixed_precision:
+        from torch.cuda.amp import autocast, GradScaler
+        scaler = GradScaler()
     # training loop
     for epoch in range(epoch_start, p.trainer.num_epochs):
         # log learning rate
-        train_writer.add_scalar('lr', lr_schedule.get_last_lr()[0], epoch * len(coco_train))
+        train_writer.add_scalar('lr', lr_schedule.get_last_lr()[0], epoch * len(train_set))
         # TRAIN
         model.train(True)
         running_loss = 0
-        with tqdm(coco_train) as t:
+        with tqdm(train_set) as t:
             for i, sample in enumerate(t):
                 image_b3hw = sample['image_b3hw'].to(device)
                 seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
@@ -99,7 +116,13 @@ if __name__ == '__main__':
                 # prevent accumulation
                 optimizer.zero_grad()
                 # forward inference
-                with autocast(p.trainer.mixed_precision):
+                if p.trainer.mixed_precision:
+                    with autocast(True):
+                        output = model(image_b3hw)
+                        loss = 0
+                        for o in output:
+                            loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
+                else:
                     output = model(image_b3hw)
                     loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
                 # backward optimize
@@ -115,11 +138,11 @@ if __name__ == '__main__':
                 t.set_description_str('[EPOCH %d] Loss: %.4f' %
                                       (epoch, running_loss / (i+1)))
                 if i % 50 == 0:
-                    train_writer.add_scalar('loss', loss.item(), epoch * len(coco_train) + i)
+                    train_writer.add_scalar('loss', loss.item(), epoch * len(train_set) + i)
         # VALIDATION
         model.eval()
         running_loss = 0
-        for sample in coco_val:
+        for sample in val_set:
             image_b3hw = sample['image_b3hw'].to(device)
             seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
             loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
@@ -127,8 +150,8 @@ if __name__ == '__main__':
                 output = model(image_b3hw)
                 loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
                 running_loss += loss.item()
-        val_loss = running_loss / len(coco_val)
-        val_writer.add_scalar('loss', val_loss, (epoch+1) * len(coco_train))
+        val_loss = running_loss / len(val_set)
+        val_writer.add_scalar('loss', val_loss, (epoch+1) * len(train_set))
         print_info('Validation Loss: %.4f' % val_loss)
         # update learning rate
         lr_schedule.step()
