@@ -12,7 +12,7 @@ from tqdm import tqdm
 from segmentation.data import COCODataset, ADE20KDataset
 from segmentation.loss import FocalLoss
 from segmentation.model import FPNResNet18
-from utils.console import print_info
+from utils.console import print_info, print_ok, print_warn
 from utils.params import ParamDict
 
 def parse_arguments():
@@ -41,12 +41,11 @@ def get_session_dir(logdir, tag):
 if __name__ == '__main__':
     args = parse_arguments()
     p = ParamDict.from_file(args.params)
-    sess_dir = get_session_dir(args.logdir, args.tag)
     # data
-    train_set = ADE20KDataset(p.data, train=True) #COCODataset(p.data, train=True)
-    val_set = ADE20KDataset(p.data, train=False) #COCODataset(p.data, train=False)
-    print("Training set has {} data points.".format(len(train_set)))
-    print("Validation set has {} data points".format(len(val_set)))
+    train_set = p.data.dataset(p.data.params, train=True)
+    val_set = p.data.dataset(p.data.params, train=False)
+    print_ok("Training set has {} data points.".format(len(train_set)))
+    print_ok("Validation set has {} data points".format(len(val_set)))
     train_set = DataLoader(train_set, batch_size=p.data.batch_size, shuffle=True,
                             pin_memory=True, num_workers=p.data.num_workers, drop_last=True)
     val_set = DataLoader(val_set, batch_size=p.data.batch_size, shuffle=True,
@@ -61,7 +60,7 @@ if __name__ == '__main__':
     for name, param in model.named_parameters():
         if 'bn' in name:
             bn_params.append(param)
-            print('Found Batch Norm Param: {}'.format(name))
+            print_warn('Found Batch Norm Param: {}'.format(name))
         else:
             non_bn_params.append(param)
     optimizer = torch.optim.SGD([
@@ -69,12 +68,7 @@ if __name__ == '__main__':
         {'params': non_bn_params},
     ], lr=p.trainer.lr_init, momentum=p.trainer.lr_momentum, weight_decay=p.trainer.weight_decay)
     lr_schedule = torch.optim.lr_scheduler.LambdaLR(optimizer, p.trainer.lr_schedule)
-    # logging
-    train_writer = SummaryWriter(os.path.join(sess_dir, 'train'))
-    val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
-    image_b3hw = torch.zeros((1,3) + p.data.crop_params.output_hw)
-    train_writer.add_graph(model, image_b3hw)
-    # resume if applicable
+    # resume / load pretrain if applicable
     epoch_start = 0
     if args.resume is not None or args.pretrained is not None:
         assert (args.pretrained is None) ^ (args.resume is None),\
@@ -93,6 +87,12 @@ if __name__ == '__main__':
             model.load_state_dict(state_dict['model'])
             optimizer.load_state_dict(state_dict['optimizer'])
             lr_schedule.load_state_dict(state_dict['lr_schedule'])
+    # logging
+    sess_dir = get_session_dir(args.logdir, args.tag)
+    train_writer = SummaryWriter(os.path.join(sess_dir, 'train'))
+    val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
+    image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
+    train_writer.add_graph(model, image_b3hw)
     # transfer to GPU device
     device = torch.device('cuda:0')
     model.to(device)
@@ -108,25 +108,21 @@ if __name__ == '__main__':
         # TRAIN
         model.train(True)
         running_loss = 0
-        with tqdm(train_set) as t:
+        with tqdm(train_set, dynamic_ncols=True) as t:
             for i, sample in enumerate(t):
                 image_b3hw = sample['image_b3hw'].to(device)
                 seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
-                loss_mask_b1hw = sample['loss_mask_b1hw'].to(device)
+                loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
                 # prevent accumulation
                 optimizer.zero_grad()
                 # forward inference
                 if p.trainer.mixed_precision:
                     with autocast(True):
                         output = model(image_b3hw)
-                        loss = 0
-                        for o in output:
-                            loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
+                        loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
                 else:
                     output = model(image_b3hw)
-                    loss = 0
-                    for o in output:
-                        loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
+                    loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
                 # backward optimize
                 if p.trainer.mixed_precision:
                     scaler.scale(loss).backward()
@@ -147,12 +143,10 @@ if __name__ == '__main__':
         for sample in val_set:
             image_b3hw = sample['image_b3hw'].to(device)
             seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
-            loss_mask_b1hw = sample['loss_mask_b1hw'].to(device)
+            loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
             with torch.no_grad():
                 output = model(image_b3hw)
-                loss = 0
-                for o in output:
-                    loss += fl(o, seg_mask_bnhw, loss_mask_b1hw)
+                loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
                 running_loss += loss.item()
         val_loss = running_loss / len(val_set)
         val_writer.add_scalar('loss', val_loss, (epoch+1) * len(train_set))
