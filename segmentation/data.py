@@ -221,12 +221,6 @@ class ADE20KDataset(BaseSet):
     def __init__(self, params=DEFAULT_PARAMS, train=True):
         '''
         Initialize and load the ADE20K annotation file into memory.
-
-        Args:
-            - root: path to the folder containing the ADE20K_2016_07_26 folder.
-                e.g. It should be /data if images are in /data/ADE20K_2016_07_26/images
-            - annFile: path to the serialized Matlab array file provided in the dataset.
-                e.g. /data/ADE20K_2016_07_26/index_ade20k.mat
         '''
         super(ADE20KDataset, self).__init__(params, train)
         root_dir = self.p.root_dir
@@ -276,7 +270,7 @@ class ADE20KDataset(BaseSet):
         seg_mask = np.array(Image.open(seg_path), dtype = np.uint8)
         seg_mask = self.class_map(seg_mask)
         seg_mask = torch.tensor(seg_mask, dtype = torch.uint8)
-        loss_mask = torch.zeros_like(seg_mask)
+        loss_mask = torch.ones_like(seg_mask)
         return {'image': img, 'seg_mask': seg_mask, 'loss_mask': loss_mask}
 
     def _generate_class_map(self, class_desc_path):
@@ -307,3 +301,123 @@ class ADE20KDataset(BaseSet):
 
     def __len__(self):
         return self.dataset_size
+
+class FineGrainedADE20KDataset(BaseSet):
+    '''
+    Fine-grained instance-level segmentation data from the 2016 ADE20K challenge.
+
+    Data can be grabbed from https://groups.csail.mit.edu/vision/datasets/ADE20K/ADE20K_2016_07_26.zip
+    '''
+    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
+        root_dir = "/data/ADE20K_2016_07_26/",
+        classes=set([
+            'bottle',
+            'wine glass',
+            'cup',
+            'fork',
+            'knife',
+            'spoon',
+            'bowl',
+            'chair',
+            'couch',
+            'bed',
+            'dining table',
+            'toilet',
+            'laptop',
+            'mouse',
+            'remote',
+            'keyboard',
+            'microwave',
+            'oven',
+            'toaster',
+            'sink',
+            'refrigerator',
+        ])
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS, train=True):
+        '''
+        Initialize and load the ADE20K annotation file into memory.
+        '''
+        super(FineGrainedADE20KDataset, self).__init__(params, train)
+        self.ds = loadmat(os.path.join(self.p.root_dir, "index_ade20k.mat"))
+        self.ds = self.ds['index']
+        self.data_dir_base = os.path.join(self.p.root_dir, '..')
+        img_set_mark = 'train' if train else 'val'
+        self.img_path_list = []
+        self.seg_path_list = []
+        for i in range(self.ds['filename'][0, 0].shape[1]):
+            cur_file_name = self.ds['filename'][0, 0][0, i][0]
+            if img_set_mark in cur_file_name:
+                folder_path = self.ds['folder'][0, 0][0, i][0]
+                img_path = os.path.join(self.data_dir_base, folder_path, cur_file_name)
+                seg_path = FineGrainedADE20KDataset.get_seg_path(img_path)
+                self.img_path_list.append(img_path)
+                self.seg_path_list.append(seg_path)
+        self.dataset_size = len(self.img_path_list)
+
+    def get_raw_data(self, key):
+        """
+        Args:
+            key (int): key
+
+        Returns:
+            ret_dict
+        """
+        assert isinstance(key, int), "non integer key not supported!"
+        img_path = self.img_path_list[key]
+        seg_path = self.seg_path_list[key]
+        raw_img = np.array(Image.open(img_path).convert('RGB'), dtype = np.uint8)
+        seg_img = np.array(Image.open(seg_path), dtype = np.uint8)
+        cat_map = seg_img[:,:,0] // 10
+        cat_map = cat_map.astype(np.int)
+        cat_map = cat_map * 256
+        cat_map = cat_map + seg_img[:,:,1]
+        seg_mask = cat_map
+        # seg_mask = self.class_map(seg_mask)
+        seg_mask = torch.tensor(seg_mask, dtype = torch.int64)
+        loss_mask = torch.ones_like(seg_mask)
+        return {'image': raw_img, 'seg_mask': seg_mask, 'loss_mask': loss_mask}
+
+    def _generate_class_map(self, class_desc_path):
+        # Take subset of class
+        with open(class_desc_path) as f:
+            class_desc = f.readlines()
+
+        class_desc = class_desc[1:] # Remove header
+        class_desc = [line[:-1].split('\t') for line in class_desc] # remove eol
+        class_name_list = [line[-1].strip(' ') for line in class_desc]
+
+        map_dict = {}
+        cur_idx = 1 # Background maps to 0
+        for i in range(len(class_name_list)):
+            n = class_name_list[i]
+            if n in self.p.classes:
+                # Original class id is i + 1.
+                map_dict[i + 1] = cur_idx
+                cur_idx += 1
+        # Factory map function
+        def map_func(elem):
+            if elem in map_dict:
+                return map_dict[elem]
+            else:
+                return 0 # Map everything else to zero
+        vectorized_map_func = np.vectorize(map_func)
+        return vectorized_map_func
+
+    def __len__(self):
+        return self.dataset_size
+    
+    @staticmethod
+    def get_seg_path(img_path):
+        return img_path[:-4] + '_seg.png'
+
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+    ds = FineGrainedADE20KDataset(train = True)
+    print(ds.ds['objectnames'][0, 0][0, 975])
+    print("Size: {}".format(len(ds)))
+    data_dict = ds.get_raw_data(0)
+    print(data_dict['seg_mask'])
+    plt.imshow(data_dict['seg_mask'] == 976)
+    plt.show()
