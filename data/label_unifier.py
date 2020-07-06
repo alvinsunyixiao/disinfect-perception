@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 
-from segmentation.label_params import\
+from data.label_params import\
     final_classes, coco_label_map, ade20k_label_map, hospital_label_map
 
 # Mapping scheme:
