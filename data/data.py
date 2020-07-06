@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 from data.augment import \
     MultiRandomAffineCrop, MultiCenterAffineCrop, ImageAugmentor
 # Subset classes from open source datasets
-from data.ade20k_coi import fine_grained_ade20k_classes
+from data.label_params import fg_ade20k_coi
 from data.label_unifier import \
     get_coco_label_unifier, get_fine_grained_ade_label_unifier, get_hospital_label_unifier
 from utils.params import ParamDict as o
