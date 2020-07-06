@@ -129,6 +129,8 @@ class MultiRandomAffineCrop(RandomAffineCrop):
         for key in keys:
             if output_dict[key] is None:
                 continue
+            if isinstance(output_dict[key], list):
+                continue # meta data
             if isinstance(output_dict[key], torch.Tensor):
                 output_dict[key] = self.tensor_to_pil(output_dict[key])
             assert output_dict[key].size[::-1] == input_hw, \

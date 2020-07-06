@@ -1,0 +1,80 @@
+final_classes = (
+    'hospital_bed', # hospital dataset
+    'seat',
+    'medical_device',
+    'screen',
+    'bedrail',
+    'floor',
+    'wall',
+    'ceiling',
+    'table',
+    'door', # 10 (1-based)
+    'trolley',
+    'outlet',
+    'people',
+    'pole',
+    'cabinet',
+    'sink',
+    'window',
+    'curtain',
+    'faucet', # begin close-up dataset
+    'handle',
+    'knob',
+    'switch',
+    'button',
+    'tray',
+)
+
+coco_label_map = {
+    'person': 'people',
+    'chair': 'seat',
+    'couch': 'seat',
+    'bed': 'hospital_bed',
+    'dining table': 'table',
+    'sink': 'sink',
+}
+
+ade20k_label_map = {
+    'ceiling': 'ceiling',
+    'floor': 'floor',
+    'people': 'people',
+    'seat': 'seat',
+    'table': 'table',
+    'wall': 'wall',
+    'door': 'door',
+    'monitor': 'screen',
+    'switch': 'switch',
+    'outlet': 'outlet',
+    'curtain': 'curtain',
+    'sink': 'sink',
+    'cabinet': 'cabinet',
+    'faucet': 'faucet',
+    'handle': 'handle',
+    'tray': 'tray',
+    'bed': 'hospital_bed',
+    'pole': 'pole',
+    'knob': 'knob',
+    'button': 'button',
+}
+
+hospital_label_map = {
+    "hospital_bed": 'hospital_bed',
+    "seat": 'seat',
+    "medical_device": 'medical_device',
+    "screen": 'screen',
+    "bedrail": 'bedrail',
+    "floor": 'floor',
+    "wall": 'wall',
+    "ceil": 'ceiling',
+    "table": 'table',
+    "door": 'door',
+    "trolley": 'trolley',
+    "outlet": 'outlet',
+    "people": 'people',
+    "pole": 'pole',
+    "cabinet": 'cabinet',
+    "sink": 'sink',
+    "window": 'window',
+    "curtain": 'curtain',
+    "faucet": 'faucet'
+}

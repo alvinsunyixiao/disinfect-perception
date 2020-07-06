@@ -2,14 +2,22 @@ import numpy as np
 import os
 import torch
 import torchvision
+import json
 
+from copy import deepcopy
+from labelme import utils
 from scipy.io import loadmat
 from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
+# Augmentation
 from segmentation.augment import \
     MultiRandomAffineCrop, MultiCenterAffineCrop, ImageAugmentor
+# Subset classes from open source datasets
+from segmentation.ade20k_coi import fine_grained_ade20k_classes
+from segmentation.label_unifier import \
+    get_coco_label_unifier, get_fine_grained_ade_label_unifier, get_hospital_label_unifier
 from utils.params import ParamDict as o
 
 class SegEncoder:
@@ -41,6 +49,7 @@ class SegEncoder:
             'image_b3hw': tmp_dict['image'],
             'seg_mask_bnhw': self.catgory_to_onehot(tmp_dict['seg_mask']),
             'loss_mask_bnhw': self.pil_to_tensor(tmp_dict['loss_mask']).float(),
+            'valid_label_idx': tmp_dict['valid_label_idx'],
         }
 
 class BaseSet(Dataset):
@@ -75,7 +84,7 @@ class BaseSet(Dataset):
         else:
             self.multi_crop = MultiCenterAffineCrop(self.p.crop_params)
             self.img_augmentor = torchvision.transforms.ToTensor()
-        self.encoder = SegEncoder(len(self.p.classes))
+        self.encoder = SegEncoder(24) # TODO: use a consistent num_class variable
         self.color_jitter = torchvision.transforms.ColorJitter(
             brightness=self.p.color_jitter.brightness,
             contrast=self.p.color_jitter.contrast,
@@ -91,6 +100,7 @@ class BaseSet(Dataset):
         crop_data = self.multi_crop(raw_data)
         crop_data['image'] = self.img_augmentor(crop_data['image'])
         enc_data = self.encoder(crop_data)
+        enc_data['valid_label_idx'] = torch.tensor(enc_data['valid_label_idx'], dtype = torch.bool)
         return enc_data
 
 class COCODataset(BaseSet):
@@ -100,6 +110,7 @@ class COCODataset(BaseSet):
         annotation_dir='/data/COCO2017/annotations',
         min_area=200,
         classes=set([
+            'person',
             'bottle',
             'wine glass',
             'cup',
@@ -133,6 +144,18 @@ class COCODataset(BaseSet):
         self.coco = COCO(self.annotation_path)
         self.img_ids = list(self.coco.imgs.keys())
         self.class_map = self._generate_class_map()
+        self.label_dict = self.get_class_names()
+        self.label_unifier, self.valid_label_idx = get_coco_label_unifier(self.label_dict)
+    
+    def get_class_names(self):
+        idx = 1
+        ret = {}
+        for cat_id, cat in self.coco.cats.items():
+            if cat['name'] in self.p.classes:
+                # map cat['name'] to idx
+                ret[idx] = cat['name']
+                idx += 1
+        return ret
 
     def _generate_class_map(self):
         idx = 1
@@ -164,143 +187,16 @@ class COCODataset(BaseSet):
             elif ann['category_id'] in self.class_map:
                 class_id = self.class_map[ann['category_id']]
                 seg_mask = torch.max(seg_mask, ann_mask*class_id)
+        seg_mask = self.label_unifier(seg_mask)
         return {
             'image': self._get_img(img_id),
             'seg_mask': seg_mask,
             'loss_mask': loss_mask,
+            'valid_label_idx': self.valid_label_idx,
         }
 
     def __len__(self):
         return len(self.coco.imgs)
-
-class ADE20KDataset(BaseSet):
-    '''
-    Fine-grained instance-level segmentation data from the 2016 ADE20K challenge.
-
-    Data can be grabbed from http://data.csail.mit.edu/places/ADEchallenge/ADEChallengeData2016.zip
-    '''
-    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
-        root_dir = "/data/ADEChallengeData2016/",
-        classes=set([
-            "wall",
-            "floor, flooring",
-            "ceiling",
-            "bed",
-            "cabinet",
-            "door, double door",
-            "table",
-            "curtain, drape, drapery, mantle, pall",
-            "chair",
-            "sofa, couch, lounge",
-            "shelf",
-            "armchair",
-            "seat",
-            "desk",
-            "lamp",
-            "chest of drawers, chest, bureau, dresser",
-            "pillow",
-            "screen door, screen",
-            "coffee table, cocktail table",
-            "toilet, can, commode, crapper, pot, potty, stool, throne",
-            "kitchen island",
-            "computer, computing machine, computing device, data processor, electronic computer, information processing system",
-            "swivel chair",
-            "pole",
-            "bannister, banister, balustrade, balusters, handrail",
-            "cradle",
-            "oven",
-            "screen, silver screen, projection screen",
-            "blanket, cover",
-            "tray",
-            "crt screen",
-            "plate",
-            "monitor, monitoring device"
-        ])
-    )
-
-    def __init__(self, params=DEFAULT_PARAMS, train=True):
-        '''
-        Initialize and load the ADE20K annotation file into memory.
-        '''
-        super(ADE20KDataset, self).__init__(params, train)
-        root_dir = self.p.root_dir
-        if train:
-            img_dir = os.path.join(root_dir, "images/training")
-            seg_anno_path = os.path.join(root_dir, "annotations/training")
-        else:
-            img_dir = os.path.join(root_dir, "images/validation")
-            seg_anno_path = os.path.join(root_dir, "annotations/validation")
-        anno_path = os.path.join(root_dir, "sceneCategories.txt")
-        class_desc_path = os.path.join(root_dir, "objectInfo150.txt")
-        # Load file paths and annotations
-        with open(anno_path) as f:
-            anno_content = f.readlines()
-
-        self.img_path_list = []
-        self.scenario_list = []
-        self.seg_path_list = []
-
-        for line in anno_content:
-            img_name, scene_name = line[:-1].split(' ') # remove eol
-            if train and "val" in img_name:
-                continue
-            if not train and "train" in img_name:
-                continue
-            img_path = os.path.join(img_dir, img_name + '.jpg')
-            seg_path = os.path.join(seg_anno_path, img_name + '.png')
-            self.img_path_list.append(img_path)
-            self.seg_path_list.append(seg_path)
-            self.scenario_list.append(scene_name)
-
-        self.dataset_size = len(self.img_path_list)
-        self.class_map = self._generate_class_map(class_desc_path)
-
-    def get_raw_data(self, key):
-        """
-        Args:
-            key (int): key
-
-        Returns:
-            ret_dict
-        """
-        assert isinstance(key, int), "non integer key not supported!"
-        img_path = self.img_path_list[key]
-        seg_path = self.seg_path_list[key]
-        img = Image.open(img_path).convert('RGB')
-        seg_mask = np.array(Image.open(seg_path), dtype = np.uint8)
-        seg_mask = self.class_map(seg_mask)
-        seg_mask = torch.tensor(seg_mask, dtype = torch.uint8)
-        loss_mask = torch.ones_like(seg_mask)
-        return {'image': img, 'seg_mask': seg_mask, 'loss_mask': loss_mask}
-
-    def _generate_class_map(self, class_desc_path):
-        # Take subset of class
-        with open(class_desc_path) as f:
-            class_desc = f.readlines()
-
-        class_desc = class_desc[1:] # Remove header
-        class_desc = [line[:-1].split('\t') for line in class_desc] # remove eol
-        class_name_list = [line[-1].strip(' ') for line in class_desc]
-
-        map_dict = {}
-        cur_idx = 1 # Background maps to 0
-        for i in range(len(class_name_list)):
-            n = class_name_list[i]
-            if n in self.p.classes:
-                # Original class id is i + 1.
-                map_dict[i + 1] = cur_idx
-                cur_idx += 1
-        # Factory map function
-        def map_func(elem):
-            if elem in map_dict:
-                return map_dict[elem]
-            else:
-                return 0 # Map everything else to zero
-        vectorized_map_func = np.vectorize(map_func)
-        return vectorized_map_func
-
-    def __len__(self):
-        return self.dataset_size
 
 class FineGrainedADE20KDataset(BaseSet):
     '''
@@ -310,29 +206,7 @@ class FineGrainedADE20KDataset(BaseSet):
     '''
     DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
         root_dir = "/data/ADE20K_2016_07_26/",
-        classes=set([
-            'bottle',
-            'wine glass',
-            'cup',
-            'fork',
-            'knife',
-            'spoon',
-            'bowl',
-            'chair',
-            'couch',
-            'bed',
-            'dining table',
-            'toilet',
-            'laptop',
-            'mouse',
-            'remote',
-            'keyboard',
-            'microwave',
-            'oven',
-            'toaster',
-            'sink',
-            'refrigerator',
-        ])
+        classes=fine_grained_ade20k_classes
     )
 
     def __init__(self, params=DEFAULT_PARAMS, train=True):
@@ -355,8 +229,21 @@ class FineGrainedADE20KDataset(BaseSet):
                 self.img_path_list.append(img_path)
                 self.seg_path_list.append(seg_path)
         self.dataset_size = len(self.img_path_list)
+        self.class_map = self._generate_class_map()
+        self.label_dict = self.get_class_names()
+        self.label_unifier, self.valid_label_idx = get_fine_grained_ade_label_unifier(self.label_dict)
+    
+    def get_class_names(self):
+        class_name_file = os.path.join(self.p.root_dir, 'clustered_labels.txt')
+        with open(class_name_file) as f:
+            class_name_list = f.readlines()
+        processed_label_list = [c.strip('\n') for c in class_name_list]
+        ret = {}
+        for i in range(len(processed_label_list)):
+            ret[i + 1] = processed_label_list[i]
+        return ret
 
-    def get_raw_data(self, key):
+    def get_raw_data(self, key, save_processed_image = False):
         """
         Args:
             key (int): key
@@ -367,35 +254,48 @@ class FineGrainedADE20KDataset(BaseSet):
         assert isinstance(key, int), "non integer key not supported!"
         img_path = self.img_path_list[key]
         seg_path = self.seg_path_list[key]
-        raw_img = np.array(Image.open(img_path).convert('RGB'), dtype = np.uint8)
-        seg_img = np.array(Image.open(seg_path), dtype = np.uint8)
-        cat_map = seg_img[:,:,0] // 10
-        cat_map = cat_map.astype(np.int)
-        cat_map = cat_map * 256
-        cat_map = cat_map + seg_img[:,:,1]
-        seg_mask = cat_map
-        # seg_mask = self.class_map(seg_mask)
-        seg_mask = torch.tensor(seg_mask, dtype = torch.int64)
+        processed_seg_image_path = seg_path[:-4] + '_processed.png'
+        raw_img = Image.open(img_path).convert('RGB')
+        if os.path.exists(processed_seg_image_path):
+            # Read from pre-processed images
+            seg_mask = np.array(Image.open(processed_seg_image_path), dtype = np.uint8)
+        else:
+            # Start from scratch
+            seg_img = np.array(Image.open(seg_path), dtype = np.uint8)
+            cat_map = seg_img[:,:,0] // 10
+            cat_map = cat_map.astype(np.int)
+            cat_map = cat_map * 256
+            cat_map = cat_map + seg_img[:,:,1]
+            seg_mask = self.class_map(cat_map).astype(np.uint8)
+            if save_processed_image:
+                processed_seg_image = Image.fromarray(seg_mask)
+                processed_seg_image.save(new_seg_path)
+        seg_mask = torch.tensor(seg_mask, dtype = torch.uint8)
+        seg_mask = self.label_unifier(seg_mask)
         loss_mask = torch.ones_like(seg_mask)
-        return {'image': raw_img, 'seg_mask': seg_mask, 'loss_mask': loss_mask}
+        return {
+            'image': raw_img,
+            'seg_mask': seg_mask,
+            'loss_mask': loss_mask,
+            'valid_label_idx': self.valid_label_idx,
+        }
 
-    def _generate_class_map(self, class_desc_path):
+    def _generate_class_map(self):
+        class_name_list = []
+        for i in range(self.ds['objectnames'][0, 0].shape[1]):
+            class_name = self.ds['objectnames'][0, 0][0, i][0]
+            class_name_list.append(class_name)
         # Take subset of class
-        with open(class_desc_path) as f:
-            class_desc = f.readlines()
-
-        class_desc = class_desc[1:] # Remove header
-        class_desc = [line[:-1].split('\t') for line in class_desc] # remove eol
-        class_name_list = [line[-1].strip(' ') for line in class_desc]
-
         map_dict = {}
         cur_idx = 1 # Background maps to 0
-        for i in range(len(class_name_list)):
-            n = class_name_list[i]
-            if n in self.p.classes:
-                # Original class id is i + 1.
-                map_dict[i + 1] = cur_idx
-                cur_idx += 1
+        # Class of Interest
+        for coi in self.p.classes:
+            if not isinstance(coi, tuple):
+                coi = (coi,)
+            for c in coi:
+                catmap_cls_id = class_name_list.index(c) + 1
+                map_dict[catmap_cls_id] = cur_idx
+            cur_idx += 1
         # Factory map function
         def map_func(elem):
             if elem in map_dict:
@@ -412,12 +312,99 @@ class FineGrainedADE20KDataset(BaseSet):
     def get_seg_path(img_path):
         return img_path[:-4] + '_seg.png'
 
+class HospitalDataset(BaseSet):
+    '''
+    Custom Hospital Dataset
+    '''
+    DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
+        root_dir = "/data/hospital_images/",
+        classes=[
+            "hospital_bed",
+            "seat",
+            "medical_device",
+            "screen",
+            "bedrail",
+            "floor",
+            "wall",
+            "ceil",
+            "table",
+            "door",
+            "trolley",
+            "outlet",
+            "people",
+            "pole",
+            "cabinet",
+            "sink",
+            "window",
+            "curtain",
+            "faucet"
+        ],
+        total_data_cnt = 167
+    )
+
+    def __init__(self, params=DEFAULT_PARAMS, train=True):
+        '''
+        Initialize and load the ADE20K annotation file into memory.
+        '''
+        super(HospitalDataset, self).__init__(params, train)
+        img_path_template = os.path.join(self.p.root_dir, "{0}.jpg")
+        json_path_template = os.path.join(self.p.root_dir, "{0}.json")
+        self.img_path_list = []
+        self.json_path_list = []
+        for i in range(self.p.total_data_cnt):
+            img_path = img_path_template.format(i)
+            json_path = json_path_template.format(i)
+            assert os.path.exists(img_path)
+            assert os.path.exists(json_path)
+            self.img_path_list.append(img_path)
+            self.json_path_list.append(json_path)
+        self.dataset_size = self.p.total_data_cnt # TODO: do some train-val split
+        self.label_dict = self.get_class_names()
+        self.label_name_to_value = {'_background_': 0}
+        for num in self.label_dict:
+            cls_name = self.label_dict[num]
+            self.label_name_to_value[cls_name] = num
+        self.label_unifier, self.valid_label_idx = get_hospital_label_unifier(self.label_dict)
+    
+    def get_class_names(self):
+        processed_label_list = self.p.classes
+        ret = {}
+        for i in range(len(processed_label_list)):
+            ret[i + 1] = processed_label_list[i]
+        return ret
+
+    def get_raw_data(self, key, save_processed_image = False):
+        """
+        Args:
+            key (int): key
+
+        Returns:
+            ret_dict
+        """
+        assert isinstance(key, int)
+        json_file = self.json_path_list[key]
+
+        data = json.load(open(json_file))
+        imageData = data["imageData"]
+        raw_img = utils.img_b64_to_arr(imageData) # img: H x W x C
+        seg_mask, _ = utils.shapes_to_label(raw_img.shape, data["shapes"], self.label_name_to_value) # HxW
+        seg_mask = torch.tensor(seg_mask, dtype = torch.uint8)
+        seg_mask = self.label_unifier(seg_mask)
+        loss_mask = torch.ones_like(seg_mask)
+        raw_img = Image.fromarray(raw_img)
+        return {
+            'image': raw_img,
+            'seg_mask': seg_mask,
+            'loss_mask': loss_mask,
+            'valid_label_idx': self.valid_label_idx,
+        }
+
+    def __len__(self):
+        return self.dataset_size
+
 if __name__ == '__main__':
+    from tqdm import tqdm
     import matplotlib.pyplot as plt
-    ds = FineGrainedADE20KDataset(train = True)
-    print(ds.ds['objectnames'][0, 0][0, 975])
-    print("Size: {}".format(len(ds)))
-    data_dict = ds.get_raw_data(0)
-    print(data_dict['seg_mask'])
-    plt.imshow(data_dict['seg_mask'] == 976)
-    plt.show()
+    ds = FineGrainedADE20KDataset(train = False)
+    for i in tqdm(range(len(ds))):
+        output_dict = ds.get_raw_data(i)

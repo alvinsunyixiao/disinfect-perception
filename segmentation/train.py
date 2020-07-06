@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from segmentation.data import COCODataset, ADE20KDataset
 from segmentation.loss import FocalLoss
 from segmentation.model import FPNResNet18
 from utils.console import print_info, print_ok, print_warn
@@ -113,16 +112,17 @@ if __name__ == '__main__':
                 image_b3hw = sample['image_b3hw'].to(device)
                 seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
                 loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
+                valid_channel_idx_bc = sample['valid_label_idx'].to(device)
                 # prevent accumulation
                 optimizer.zero_grad()
                 # forward inference
                 if p.trainer.mixed_precision:
                     with autocast(True):
                         output = model(image_b3hw)
-                        loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
+                        loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
                 else:
                     output = model(image_b3hw)
-                    loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
+                    loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
                 # backward optimize
                 if p.trainer.mixed_precision:
                     scaler.scale(loss).backward()
@@ -144,9 +144,10 @@ if __name__ == '__main__':
             image_b3hw = sample['image_b3hw'].to(device)
             seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
             loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
+            valid_channel_idx_bc = sample['valid_label_idx'].to(device)
             with torch.no_grad():
                 output = model(image_b3hw)
-                loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw)
+                loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
                 running_loss += loss.item()
         val_loss = running_loss / len(val_set)
         val_writer.add_scalar('loss', val_loss, (epoch+1) * len(train_set))
