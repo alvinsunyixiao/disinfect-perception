@@ -79,6 +79,41 @@ hospital_label_map = {
     "faucet": 'faucet'
 }
 
+binary_coco_map = {
+    'chair': 'seat',
+    'couch': 'seat',
+    'bed': 'hospital_bed',
+    'dining table': 'table'
+}
+
+binary_ade_map = {
+    'seat': 'seat',
+    'table': 'table',
+    'door': 'door',
+    'switch': 'switch',
+    'cabinet': 'cabinet',
+    'faucet': 'faucet',
+    'handle': 'handle',
+    'tray': 'tray',
+    'bed': 'hospital_bed',
+    'pole': 'pole',
+    'knob': 'knob',
+    'button': 'button',
+}
+
+binary_hospital_map = {
+    "hospital_bed": 'hospital_bed',
+    "seat": 'seat',
+    "bedrail": 'bedrail',
+    "table": 'table',
+    "door": 'door',
+    "trolley": 'trolley',
+    "pole": 'pole',
+    "cabinet": 'cabinet',
+    "sink": 'sink',
+    "faucet": 'faucet'
+}
+
 fg_ade20k_coi = [
     ("ceiling",),
     ("first floor",

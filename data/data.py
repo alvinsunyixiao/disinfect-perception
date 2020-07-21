@@ -11,6 +11,8 @@ from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
+import time
+
 # Augmentation
 from data.augment import \
     MultiRandomAffineCrop, MultiCenterAffineCrop, ImageAugmentor
@@ -206,7 +208,7 @@ class FineGrainedADE20KDataset(BaseSet):
     '''
     DEFAULT_PARAMS = BaseSet.DEFAULT_PARAMS(
         root_dir = "/data/ADE20K_2016_07_26/",
-        classes=fine_grained_ade20k_classes
+        classes = fg_ade20k_coi
     )
 
     def __init__(self, params=DEFAULT_PARAMS, train=True):
@@ -401,6 +403,36 @@ class HospitalDataset(BaseSet):
 
     def __len__(self):
         return self.dataset_size
+
+class DatasetMixer(object):
+    def __init__(self, params, train = True):
+        assert len(params) >= 1
+        self.all_datasets = []
+        for _cls, _param in params:
+        #     print(_cls)
+        #     assert isinstance(_cls, BaseSet)
+        #     assert isinstance(_param, o)
+            cls_instance = _cls(_param, train)
+            self.all_datasets.append(cls_instance)
+        self.dataset_len_list = []
+        for ds in self.all_datasets:
+            ds_len = len(ds)
+            self.dataset_len_list.append(ds_len)
+        self.total_ds_len = np.sum(self.dataset_len_list)
+
+    def __getitem__(self, key):
+        assert isinstance(key, int)
+        cur_len_sum = 0
+        for i in range(len(self.dataset_len_list)):
+            l = self.dataset_len_list[i]
+            cur_len_sum += l
+            if key < cur_len_sum:
+                break # Select i-th dataset!
+        real_key = key - cur_len_sum
+        return self.all_datasets[i][real_key]
+
+    def __len__(self):
+        return self.total_ds_len
 
 if __name__ == '__main__':
     from tqdm import tqdm
