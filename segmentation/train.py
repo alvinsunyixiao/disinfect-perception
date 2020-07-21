@@ -90,7 +90,11 @@ if __name__ == '__main__':
     sess_dir = get_session_dir(args.logdir, args.tag)
     train_writer = SummaryWriter(os.path.join(sess_dir, 'train'))
     val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
-    image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
+    if isinstance(p.data.params, tuple):
+        # Handle multiple dataset inputs
+        image_b3hw = torch.zeros((1,3) + p.data.params[0][1].crop_params.output_hw)
+    else:
+        image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
     train_writer.add_graph(model, image_b3hw)
     # transfer to GPU device
     device = torch.device('cuda:0')
