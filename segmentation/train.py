@@ -92,7 +92,6 @@ if __name__ == '__main__':
     val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
     if isinstance(p.data.params, tuple):
         # Handle multiple dataset inputs
-        # TODO: add consistency check to ensure different
         image_b3hw = torch.zeros((1,3) + p.data.params[0][1].crop_params.output_hw)
     else:
         image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
