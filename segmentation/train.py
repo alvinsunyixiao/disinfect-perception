@@ -90,7 +90,14 @@ if __name__ == '__main__':
     sess_dir = get_session_dir(args.logdir, args.tag)
     train_writer = SummaryWriter(os.path.join(sess_dir, 'train'))
     val_writer = SummaryWriter(os.path.join(sess_dir, 'val'))
-    image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
+    if isinstance(p.data.params, tuple):
+        # Handle multiple dataset inputs
+        # TODO: add consistency check to ensure different
+        image_b3hw = torch.zeros((1,3) + p.data.params[0][1].crop_params.output_hw)
+    else:
+        image_b3hw = torch.zeros((1,3) + p.data.params.crop_params.output_hw)
+    # TODO: place this param in params.py
+    accumulation_step = 4
     train_writer.add_graph(model, image_b3hw)
     # transfer to GPU device
     device = torch.device('cuda:0')
@@ -107,14 +114,13 @@ if __name__ == '__main__':
         # TRAIN
         model.train(True)
         running_loss = 0
+        optimizer.zero_grad()
         with tqdm(train_set, dynamic_ncols=True) as t:
             for i, sample in enumerate(t):
                 image_b3hw = sample['image_b3hw'].to(device)
                 seg_mask_bnhw = sample['seg_mask_bnhw'].to(device)
                 loss_mask_bnhw = sample['loss_mask_bnhw'].to(device)
                 valid_channel_idx_bc = sample['valid_label_idx'].to(device)
-                # prevent accumulation
-                optimizer.zero_grad()
                 # forward inference
                 if p.trainer.mixed_precision:
                     with autocast(True):
@@ -126,11 +132,15 @@ if __name__ == '__main__':
                 # backward optimize
                 if p.trainer.mixed_precision:
                     scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
                 else:
                     loss.backward()
-                    optimizer.step()
+                if (i + 1) % accumulation_step == 0:
+                    if p.trainer.mixed_precision:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+                    optimizer.zero_grad()
                 # loss logging
                 running_loss += loss.item()
                 t.set_description_str('[EPOCH %d] Loss: %.4f' %
@@ -147,9 +157,11 @@ if __name__ == '__main__':
             valid_channel_idx_bc = sample['valid_label_idx'].to(device)
             with torch.no_grad():
                 output = model(image_b3hw)
-                loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
+                # TODO: add back output[-1]
+                loss = fl(output, seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
                 running_loss += loss.item()
         val_loss = running_loss / len(val_set)
+        running_loss = 0
         val_writer.add_scalar('loss', val_loss, (epoch+1) * len(train_set))
         print_info('Validation Loss: %.4f' % val_loss)
         # update learning rate

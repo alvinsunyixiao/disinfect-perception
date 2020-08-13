@@ -108,7 +108,7 @@ class FeaturePyramid(nn.Module):
             self.reduce.append(conv)
             self.add_module('reduce{}'.format(i), conv)
 
-    def forward(self, *inputs):
+    def forward(self, inputs):
         assert len(inputs) == len(self.reduce), "Feature pyramid size mismatch"
         fmaps = []
         for i, redu in enumerate(self.reduce):
@@ -156,7 +156,7 @@ class FPNx(nn.Module):
 
     def forward(self, x):
         backbone_layers = self.backbone(x)
-        feature_layers = self.fpn(*backbone_layers)
+        feature_layers = self.fpn(backbone_layers)
         output = []
         for fmap in feature_layers:
             output.append(self.seghead(fmap))
