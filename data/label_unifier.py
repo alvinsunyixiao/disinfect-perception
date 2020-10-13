@@ -41,7 +41,6 @@ def get_label_unifier(raw_label_dict, string_mapping_dict, final_name_list):
         output_idx = final_name_list.index(output_name) + 1
         valid_class_list.add(output_idx - 1) # from 1-based to 0-based
         mapping_func[input_idx] = output_idx
-        # mapping_func[input_idx] = 1
     # Function factory
     def label_map_func(label_mat):
         '''
