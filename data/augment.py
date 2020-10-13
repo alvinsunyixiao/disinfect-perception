@@ -6,6 +6,8 @@ import torchvision
 
 from utils.params import ParamDict as o
 
+import numpy as np
+import cv2
 from PIL import Image
 
 class AffineCrop:
@@ -129,6 +131,8 @@ class MultiRandomAffineCrop(RandomAffineCrop):
         for key in keys:
             if output_dict[key] is None:
                 continue
+            if isinstance(output_dict[key], list):
+                continue # meta data
             if isinstance(output_dict[key], torch.Tensor):
                 output_dict[key] = self.tensor_to_pil(output_dict[key])
             assert output_dict[key].size[::-1] == input_hw, \
@@ -188,6 +192,58 @@ class RandomColorJitter:
         else:
             return img_pil
 
+class RandomMotionBlur:
+
+    def __init__(self, prob = 0.1, size_range = [3, 5, 10, 15]):
+        self.prob = prob
+        self.size_range = size_range
+        self.blur_dir_pool = (
+            self.horizontal_motion_blur,
+            self.vertical_motion_blur,
+            self.diagonal_motion_blur,
+            self.inverse_diagonal_motion_blur
+        )
+
+    def __call__(self, img_3hw):
+        if random.random() < self.prob:
+            img_3hw = img_3hw.numpy().transpose((1, 2, 0))
+            blur_kernel_size = random.choice(self.size_range)
+            blur_dir_func = random.choice(self.blur_dir_pool)
+            img_3hw = blur_dir_func(img_3hw, blur_kernel_size)
+            img_3hw = img_3hw.transpose((2, 0, 1))
+            img_3hw = torch.tensor(img_3hw)
+            return img_3hw
+        else:
+            return img_3hw
+    
+    @staticmethod
+    def horizontal_motion_blur(img, kernel_size):
+        kernel = np.zeros((kernel_size, kernel_size))
+        kernel[int((kernel_size - 1) / 2),:] = np.ones(kernel_size)
+        kernel /= kernel_size
+        return cv2.filter2D(img, -1, kernel) 
+
+    @staticmethod
+    def vertical_motion_blur(img, kernel_size):
+        kernel = np.zeros((kernel_size, kernel_size))
+        kernel[:,int((kernel_size - 1) / 2)] = np.ones(kernel_size)
+        kernel /= kernel_size
+        return cv2.filter2D(img, -1, kernel) 
+
+    @staticmethod
+    def diagonal_motion_blur(img, kernel_size):
+        kernel = np.eye(kernel_size)
+        kernel /= kernel_size
+        return cv2.filter2D(img, -1, kernel)
+
+    @staticmethod
+    def inverse_diagonal_motion_blur(img, kernel_size):
+        kernel = np.zeros((kernel_size, kernel_size))
+        for i in range(kernel_size):
+            kernel[i,kernel_size - i - 1] = 1
+        kernel /= kernel_size
+        return cv2.filter2D(img, -1, kernel)
+
 class ImageAugmentor:
 
     DEFAULT_PARAMS=o(
@@ -197,6 +253,10 @@ class ImageAugmentor:
             saturation=0.3,
             hue=0.1,
             prob=0.8,
+        ),
+        random_motion_blur=o(
+            prob = 0.1221,
+            size_range = (3, 5, 10 ,15)
         ),
         gauss_noise=o(
             std=0.05,
@@ -215,6 +275,10 @@ class ImageAugmentor:
             hue=self.p.color_jitter.hue,
             prob=self.p.color_jitter.prob,
         )
+        self.random_motion_blur = RandomMotionBlur(
+            prob=self.p.random_motion_blur.prob,
+            size_range=self.p.random_motion_blur.size_range
+        )
         self.gauss_noise = AdditiveGaussianNoise(
             std=self.p.gauss_noise.std,
             prob=self.p.gauss_noise.prob,
@@ -224,6 +288,7 @@ class ImageAugmentor:
     def __call__(self, img_pil):
         img_pil = self.color_jitter(img_pil)
         img = self.pil_to_tensor(img_pil)
+        img = self.random_motion_blur(img)
         img = self.gauss_noise(img)
         img = torch.clamp(img, 0, 1)
         return img

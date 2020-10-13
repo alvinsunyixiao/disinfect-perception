@@ -1,6 +1,6 @@
 import torch
 
-from segmentation.data import COCODataset
+from data.data import COCODataset, FineGrainedADE20KDataset, HospitalDataset, DatasetMixer
 from segmentation.loss import FocalLoss
 from segmentation.model import FPNResNet18
 from utils.params import ParamDict as o
@@ -8,14 +8,17 @@ from utils.params import ParamDict as o
 data = o(
     batch_size=32,
     num_workers=12,
-    dataset=COCODataset,
-    params=COCODataset.DEFAULT_PARAMS,
+    dataset=DatasetMixer,
+    params=(
+        (FineGrainedADE20KDataset, FineGrainedADE20KDataset.DEFAULT_PARAMS), 
+        (HospitalDataset, HospitalDataset.DEFAULT_PARAMS)
+    ),
 )
 
 def lr_schedule(epoch):
     if epoch < 40:
-        return 1e0
-    elif epoch < 80:
+        return 1e-0
+    elif epoch < 70:
         return 1e-1
     else:
         return 1e-2
@@ -37,7 +40,7 @@ PARAMS=o(
 )
 
 def resolve_dependancies(params):
-    params.model.update(num_classes=len(params.data.params.classes))
+    params.model.update(num_classes=24)
 
 resolve_dependancies(PARAMS)
 
