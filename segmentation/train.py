@@ -156,8 +156,7 @@ if __name__ == '__main__':
             valid_channel_idx_bc = sample['valid_label_idx'].to(device)
             with torch.no_grad():
                 output = model(image_b3hw)
-                # TODO: add back output[-1]
-                loss = fl(output, seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
+                loss = fl(output[-1], seg_mask_bnhw, loss_mask_bnhw, valid_channel_idx_bc)
                 running_loss += loss.item()
         val_loss = running_loss / len(val_set)
         running_loss = 0
