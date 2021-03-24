@@ -3,9 +3,20 @@ import torch
 
 from torch import nn
 from torchvision.models import resnet
-from torchvision.models.utils import load_state_dict_from_url
 
 from utils.params import ParamDict as o
+
+model_urls = {
+    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
+    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+    'resnext50_32x4d': 'https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth',
+    'resnext101_32x8d': 'https://download.pytorch.org/models/resnext101_32x8d-8ba56ff5.pth',
+    'wide_resnet50_2': 'https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth',
+    'wide_resnet101_2': 'https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth',
+}
 
 class ImageNormalize(nn.Module):
 
@@ -50,12 +61,8 @@ class ResNet(resnet.ResNet):
     @see https://pytorch.org/docs/stable/_modules/torchvision/models/resnet.html
     """
 
-    def __init__(self, arch='resnet50', pretrained=True, **kwargs):
+    def __init__(self, arch='resnet50', **kwargs):
         super(ResNet, self).__init__(**kwargs)
-        if pretrained:
-            state_dict = load_state_dict_from_url(resnet.model_urls[arch],
-                                                  progress=True)
-            self.load_state_dict(state_dict)
         self.normalize = ImageNormalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
@@ -75,23 +82,21 @@ class ResNet(resnet.ResNet):
 
 class ResNet50(ResNet):
 
-    def __init__(self, pretrained=True, **kwargs):
+    def __init__(self, **kwargs):
         super(ResNet50, self).__init__(
             arch='resnet50',
             block=resnet.Bottleneck,
             layers=[3, 4, 6, 3],
-            pretrained=pretrained,
             **kwargs,
         )
 
 class ResNet18(ResNet):
 
-    def __init__(self, pretrained=True, **kwargs):
+    def __init__(self, **kwargs):
         super(ResNet18, self).__init__(
             arch='resnet18',
             block=resnet.BasicBlock,
             layers=[2, 2, 2, 2],
-            pretrained=pretrained,
             **kwargs,
         )
 
@@ -150,7 +155,7 @@ class FPNx(nn.Module):
     def __init__(self, backbone, fp_channels, seg_channels, seg_layers,
                  num_classes, backbone_channels, pretrianed_backbone=True):
         super(FPNx, self).__init__()
-        self.backbone = backbone(pretrained=pretrianed_backbone)
+        self.backbone = backbone()
         self.fpn = FeaturePyramid(backbone_channels, fp_channels)
         self.seghead = SegHead(fp_channels, seg_channels, seg_layers, num_classes)
 
@@ -170,7 +175,6 @@ class FPNResNet18(FPNx):
         seg_channels=256,
         seg_layers=1,
         num_classes=21,
-        pretrianed_backbone=True,
     )
 
     def __init__(self, params=DEFAULT_PARAMS):
@@ -182,6 +186,65 @@ class FPNResNet18(FPNx):
             seg_layers=self.p.seg_layers,
             num_classes=self.p.num_classes,
             backbone_channels=(512, 256, 128, 64),
-            pretrianed_backbone=self.p.pretrianed_backbone,
         )
 
+# late night code
+# TODO: separate these out to an isolated file
+
+from mit_semseg.models.models import mobilenet, MobileNetV2Dilated
+from mit_semseg.lib.nn import SynchronizedBatchNorm2d
+BatchNorm2d = SynchronizedBatchNorm2d
+
+def conv3x3_bn_relu(in_planes, out_planes, stride=1):
+    "3x3 convolution + BN + relu"
+    return nn.Sequential(
+            nn.Conv2d(in_planes, out_planes, kernel_size=3,
+                      stride=stride, padding=1, bias=False),
+            BatchNorm2d(out_planes),
+            nn.ReLU(inplace=True),
+            )
+
+class C1(nn.Module):
+    def __init__(self, num_class=150, fc_dim=2048, use_softmax=False):
+        super(C1, self).__init__()
+        self.use_softmax = use_softmax
+
+        self.cbr = conv3x3_bn_relu(fc_dim, fc_dim // 4, 1)
+
+        # last conv
+        self.conv_last = nn.Conv2d(fc_dim // 4, num_class, 1, 1, 0)
+
+    def forward(self, conv_out, segSize=None):
+        conv5 = conv_out[-1]
+        x = self.cbr(conv5)
+        x = self.conv_last(x)
+
+        if self.use_softmax: # is True during inference
+            x = nn.functional.interpolate(
+                x, size=256, mode='bilinear', align_corners=False)
+            x = nn.functional.softmax(x, dim=1)
+        else:
+            x = nn.functional.interpolate(
+                x, size=256, mode='bilinear', align_corners=False)
+            x = nn.functional.log_softmax(x, dim=1)
+
+        return x
+
+class NoFPNMobileNetV2Dilated(nn.Module):
+
+    DEFAULT_PARAMS=o(
+        dilate_scale=8,
+    )
+
+    def __init__(self, params = DEFAULT_PARAMS):
+        super(NoFPNMobileNetV2Dilated, self).__init__()
+        self.p = params
+        orig_mobilenet = mobilenet.__dict__['mobilenetv2'](pretrained=True)
+        self.backbone = MobileNetV2Dilated(orig_mobilenet, dilate_scale=self.p.dilate_scale)
+        self.net_decoder = C1(
+                num_class=150,
+                fc_dim=320,
+                use_softmax=False)
+    
+    def forward(self, x):
+        return self.net_decoder(self.backbone(x, return_feature_maps = True))

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from data.label_params import\
-    final_classes, coco_label_map, ade20k_label_map, hospital_label_map
+    final_classes, coco_label_map, ade20k_label_map, hospital_label_map, coarse_ade20k_map
 
 from data.label_params import\
     binary_coco_map, binary_ade_map, binary_hospital_map
@@ -68,3 +68,6 @@ def get_fine_grained_ade_label_unifier(label_dict):
 
 def get_hospital_label_unifier(label_dict):
     return get_label_unifier(label_dict, hospital_label_map, final_classes)
+
+def get_coarse_grained_ade_label_unifier(label_dict):
+    return get_label_unifier(label_dict, coarse_ade20k_map, final_classes)
